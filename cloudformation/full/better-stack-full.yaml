@@ -1,0 +1,886 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Stream CloudWatch metrics, logs, X-Ray traces, and CloudTrail audit logs to Better Stack via Kinesis Data Firehose.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Better Stack Configuration
+        Parameters:
+          - ClusterId
+          - SourceToken
+          - SourceId
+      - Label:
+          default: Deployment Options
+        Parameters:
+          - CreateGlobalResources
+      - Label:
+          default: Features
+        Parameters:
+          - EnableTagEnrichment
+          - EnableCloudTrail
+          - EnableXRayTransactionSearch
+
+Parameters:
+  ClusterId:
+    Type: String
+    Description: Your Better Stack cluster ID (e.g., "eu-nbg-2", "us-east-9")
+    AllowedPattern: '[a-zA-Z0-9_-]+'
+    ConstraintDescription: Cluster ID must contain only alphanumeric characters, hyphens, and underscores
+
+  SourceToken:
+    Type: String
+    Description: Better Stack source token for authentication
+    NoEcho: true
+    MinLength: 1
+
+  SourceId:
+    Type: String
+    Description: Better Stack source ID for resource matching
+    AllowedPattern: '[a-zA-Z0-9_-]+'
+    MinLength: 1
+
+  CreateGlobalResources:
+    Type: String
+    Description: Create IAM roles. Set to false for secondary regions.
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  EnableTagEnrichment:
+    Type: String
+    Description: Enable Lambda-based tag enrichment for metrics and logs
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  EnableCloudTrail:
+    Type: String
+    Description: Create a new CloudTrail trail and forward to Better Stack
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  EnableXRayTransactionSearch:
+    Type: String
+    Description: Enable X-Ray Transaction Search and forward spans to Better Stack
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+Conditions:
+  ShouldCreateGlobalResources: !Equals [!Ref CreateGlobalResources, 'true']
+  TagEnrichmentEnabled: !Equals [!Ref EnableTagEnrichment, 'true']
+  CloudTrailEnabled: !Equals [!Ref EnableCloudTrail, 'true']
+  XRayEnabled: !Equals [!Ref EnableXRayTransactionSearch, 'true']
+
+  # Compound conditions
+  CreateTagEnrichmentLambdaRole: !And
+    - !Condition ShouldCreateGlobalResources
+    - !Condition TagEnrichmentEnabled
+
+  # CloudTrail is multi-region, so only create once in first region
+  ShouldCreateCloudTrail: !And
+    - !Condition ShouldCreateGlobalResources
+    - !Condition CloudTrailEnabled
+
+Resources:
+  # =============================================================================
+  # GLOBAL RESOURCES (created only when CreateGlobalResources=true)
+  # =============================================================================
+
+  # IAM Role for Firehose (metrics and logs)
+  FirehoseRole:
+    Type: AWS::IAM::Role
+    Condition: ShouldCreateGlobalResources
+    Properties:
+      RoleName: !Sub 'better-stack-firehose-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: firehose.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                sts:ExternalId: !Ref AWS::AccountId
+      Policies:
+        - PolicyName: S3BackupPermissions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: S3Write
+                Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetBucketLocation
+                  - s3:ListBucket
+                Resource:
+                  - !Sub 'arn:aws:s3:::better-stack-firehose-${AWS::AccountId}-*'
+                  - !Sub 'arn:aws:s3:::better-stack-firehose-${AWS::AccountId}-*/*'
+        - PolicyName: CloudWatchLogsPermissions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: LogsWrite
+                Effect: Allow
+                Action:
+                  - logs:PutLogEvents
+                  - logs:CreateLogStream
+                  - logs:CreateLogGroup
+                Resource:
+                  - !Sub 'arn:aws:logs:*:${AWS::AccountId}:log-group:/aws/kinesisfirehose/better-stack-*:*'
+      Tags:
+        - Key: Solution
+          Value: BetterStack
+
+  # IAM Role for CloudWatch Metric Stream
+  MetricStreamRole:
+    Type: AWS::IAM::Role
+    Condition: ShouldCreateGlobalResources
+    Properties:
+      RoleName: !Sub 'better-stack-metric-stream-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: streams.metrics.cloudwatch.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: FirehoseWritePermissions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: FirehoseWrite
+                Effect: Allow
+                Action:
+                  - firehose:PutRecord
+                  - firehose:PutRecordBatch
+                Resource: !Sub 'arn:aws:firehose:*:${AWS::AccountId}:deliverystream/better-stack-metrics'
+      Tags:
+        - Key: Solution
+          Value: BetterStack
+
+  # IAM Role for CloudWatch Logs Subscription
+  LogsSubscriptionRole:
+    Type: AWS::IAM::Role
+    Condition: ShouldCreateGlobalResources
+    Properties:
+      RoleName: !Sub 'better-stack-logs-subscription-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: logs.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringLike:
+                aws:SourceArn: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*'
+      Policies:
+        - PolicyName: FirehoseWritePermissions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: FirehoseWrite
+                Effect: Allow
+                Action:
+                  - firehose:PutRecord
+                  - firehose:PutRecordBatch
+                Resource: !Sub 'arn:aws:firehose:*:${AWS::AccountId}:deliverystream/better-stack-logs'
+      Tags:
+        - Key: Solution
+          Value: BetterStack
+
+  # IAM Role for Tag Enrichment Lambdas (global - created once)
+  TagEnrichmentLambdaRole:
+    Type: AWS::IAM::Role
+    Condition: CreateTagEnrichmentLambdaRole
+    Properties:
+      RoleName: !Sub 'better-stack-tag-enrichment-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: ResourceTaggingPermissions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: TagAccess
+                Effect: Allow
+                Action:
+                  - tag:GetResources
+                  - tag:GetTagKeys
+                  - tag:GetTagValues
+                Resource: '*'
+              - Sid: EC2Describe
+                Effect: Allow
+                Action:
+                  - ec2:DescribeInstances
+                  - ec2:DescribeVolumes
+                  - ec2:DescribeTags
+                Resource: '*'
+              - Sid: RDSDescribe
+                Effect: Allow
+                Action:
+                  - rds:DescribeDBInstances
+                Resource: '*'
+              - Sid: LambdaDescribe
+                Effect: Allow
+                Action:
+                  - lambda:ListFunctions
+                  - lambda:GetFunction
+                Resource: '*'
+      Tags:
+        - Key: Solution
+          Value: BetterStack
+
+  # Better Stack Integration Role (STS cross-account access)
+  IntegrationRole:
+    Type: AWS::IAM::Role
+    Condition: ShouldCreateGlobalResources
+    Properties:
+      RoleName: !Sub 'better-stack-integration-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: 'arn:aws:iam::476114145753:root'
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                sts:ExternalId: !Join ['', ['bs-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]]
+      Policies:
+        - PolicyName: BetterStackReadAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: CloudWatchRead
+                Effect: Allow
+                Action:
+                  - cloudwatch:Describe*
+                  - cloudwatch:Get*
+                  - cloudwatch:List*
+                Resource: '*'
+              - Sid: LogsRead
+                Effect: Allow
+                Action:
+                  - logs:Describe*
+                  - logs:Get*
+                  - logs:List*
+                  - logs:FilterLogEvents
+                  - logs:TestMetricFilter
+                Resource: '*'
+              - Sid: EC2Read
+                Effect: Allow
+                Action:
+                  - ec2:Describe*
+                Resource: '*'
+              - Sid: TaggingRead
+                Effect: Allow
+                Action:
+                  - tag:GetResources
+                  - tag:GetTagKeys
+                  - tag:GetTagValues
+                Resource: '*'
+              - Sid: ComputeDiscovery
+                Effect: Allow
+                Action:
+                  - autoscaling:Describe*
+                  - lambda:List*
+                  - lambda:GetFunction
+                  - ecs:Describe*
+                  - ecs:List*
+                  - eks:DescribeCluster
+                  - eks:ListClusters
+                  - batch:DescribeJobDefinitions
+                  - batch:DescribeJobQueues
+                Resource: '*'
+              - Sid: DatabaseDiscovery
+                Effect: Allow
+                Action:
+                  - rds:Describe*
+                  - rds:List*
+                  - dynamodb:Describe*
+                  - dynamodb:List*
+                  - elasticache:Describe*
+                  - elasticache:List*
+                Resource: '*'
+              - Sid: StorageDiscovery
+                Effect: Allow
+                Action:
+                  - s3:GetBucketLocation
+                  - s3:GetBucketTagging
+                  - s3:ListAllMyBuckets
+                  - elasticfilesystem:DescribeFileSystems
+                  - elasticfilesystem:DescribeTags
+                Resource: '*'
+              - Sid: NetworkingDiscovery
+                Effect: Allow
+                Action:
+                  - elasticloadbalancing:Describe*
+                  - apigateway:GET
+                  - route53:List*
+                Resource: '*'
+              - Sid: MessagingDiscovery
+                Effect: Allow
+                Action:
+                  - sqs:ListQueues
+                  - sqs:GetQueueAttributes
+                  - sns:List*
+                  - sns:GetTopicAttributes
+                  - kinesis:Describe*
+                  - kinesis:List*
+                  - firehose:Describe*
+                  - firehose:List*
+                Resource: '*'
+              - Sid: ApplicationServices
+                Effect: Allow
+                Action:
+                  - states:DescribeStateMachine
+                  - states:ListStateMachines
+                  - events:List*
+                  - events:Describe*
+                Resource: '*'
+              - Sid: ManagementMonitoring
+                Effect: Allow
+                Action:
+                  - cloudtrail:DescribeTrails
+                  - cloudtrail:GetTrailStatus
+                  - cloudtrail:ListTrails
+                  - health:Describe*
+                Resource: '*'
+        - PolicyName: BetterStackWriteAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: MetricStreamManagement
+                Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricStream
+                  - cloudwatch:DeleteMetricStream
+                  - cloudwatch:StartMetricStreams
+                  - cloudwatch:StopMetricStreams
+                Resource: '*'
+              - Sid: LogsSubscriptionManagement
+                Effect: Allow
+                Action:
+                  - logs:PutSubscriptionFilter
+                  - logs:DeleteSubscriptionFilter
+                Resource: '*'
+              - Sid: PassLogsSubscriptionRole
+                Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource: !Sub 'arn:aws:iam::${AWS::AccountId}:role/better-stack-logs-subscription-role'
+      Tags:
+        - Key: Solution
+          Value: BetterStack
+
+  # =============================================================================
+  # REGIONAL RESOURCES (always created)
+  # =============================================================================
+
+  # S3 Backup Bucket for failed Firehose deliveries (per-region)
+  FirehoseBackupBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub 'better-stack-firehose-${AWS::AccountId}-${AWS::Region}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireFailedDeliveries
+            Status: Enabled
+            ExpirationInDays: 7
+      Tags:
+        - Key: Solution
+          Value: BetterStack
+        - Key: BetterStackSourceId
+          Value: !Ref SourceId
+
+  # CloudWatch Log Group for Metrics Firehose errors
+  MetricsFirehoseLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/kinesisfirehose/better-stack-metrics'
+      RetentionInDays: 7
+      Tags:
+        - Key: Solution
+          Value: BetterStack
+        - Key: BetterStackSourceId
+          Value: !Ref SourceId
+
+  MetricsFirehoseLogStream:
+    Type: AWS::Logs::LogStream
+    Properties:
+      LogGroupName: !Ref MetricsFirehoseLogGroup
+      LogStreamName: DestinationDelivery
+
+  # CloudWatch Log Group for Logs Firehose errors
+  LogsFirehoseLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/kinesisfirehose/better-stack-logs'
+      RetentionInDays: 7
+      Tags:
+        - Key: Solution
+          Value: BetterStack
+        - Key: BetterStackSourceId
+          Value: !Ref SourceId
+
+  LogsFirehoseLogStream:
+    Type: AWS::Logs::LogStream
+    Properties:
+      LogGroupName: !Ref LogsFirehoseLogGroup
+      LogStreamName: DestinationDelivery
+
+  # Log Group for Metrics Tag Enrichment Lambda
+  MetricsLambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Condition: TagEnrichmentEnabled
+    Properties:
+      LogGroupName: /aws/lambda/better-stack-metrics
+      RetentionInDays: 7
+
+  # Log Group for Logs Tag Enrichment Lambda
+  LogsLambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Condition: TagEnrichmentEnabled
+    Properties:
+      LogGroupName: /aws/lambda/better-stack-logs
+      RetentionInDays: 7
+
+  # Metrics Tag Enrichment Lambda
+  MetricsTagEnrichmentLambda:
+    Type: AWS::Lambda::Function
+    Condition: TagEnrichmentEnabled
+    DependsOn:
+      - MetricsFirehoseLogGroup
+      - MetricsLambdaLogGroup
+    Properties:
+      FunctionName: !Sub 'better-stack-metrics'
+      Description: Enriches CloudWatch metric records with AWS resource tags
+      Runtime: ruby3.3
+      Architectures:
+        - arm64
+      Handler: firehose_metrics_tag_enrichment.lambda_handler
+      Role: !If
+        - ShouldCreateGlobalResources
+        - !GetAtt TagEnrichmentLambdaRole.Arn
+        - !Sub 'arn:aws:iam::${AWS::AccountId}:role/better-stack-tag-enrichment-role'
+      Code:
+        S3Bucket: !Sub 'better-stack-lambda-${AWS::Region}'
+        S3Key: firehose_metrics_tag_enrichment.zip
+      Timeout: 120
+      MemorySize: 256
+      Environment:
+        Variables:
+          CACHE_TTL_MINUTES: '10'
+          ACCOUNT_ID: !Ref AWS::AccountId
+      Tags:
+        - Key: Solution
+          Value: BetterStack
+        - Key: BetterStackSourceId
+          Value: !Ref SourceId
+
+  # Logs Tag Enrichment Lambda
+  LogsTagEnrichmentLambda:
+    Type: AWS::Lambda::Function
+    Condition: TagEnrichmentEnabled
+    DependsOn:
+      - LogsFirehoseLogGroup
+      - LogsLambdaLogGroup
+    Properties:
+      FunctionName: !Sub 'better-stack-logs'
+      Description: Enriches CloudWatch log records with AWS resource tags
+      Runtime: ruby3.3
+      Architectures:
+        - arm64
+      Handler: firehose_logs_tag_enrichment.lambda_handler
+      Role: !If
+        - ShouldCreateGlobalResources
+        - !GetAtt TagEnrichmentLambdaRole.Arn
+        - !Sub 'arn:aws:iam::${AWS::AccountId}:role/better-stack-tag-enrichment-role'
+      Code:
+        S3Bucket: !Sub 'better-stack-lambda-${AWS::Region}'
+        S3Key: firehose_logs_tag_enrichment.zip
+      Timeout: 120
+      MemorySize: 256
+      Environment:
+        Variables:
+          CACHE_TTL_MINUTES: '10'
+          ACCOUNT_ID: !Ref AWS::AccountId
+      Tags:
+        - Key: Solution
+          Value: BetterStack
+        - Key: BetterStackSourceId
+          Value: !Ref SourceId
+
+  # Lambda permission for Firehose to invoke Metrics enrichment
+  MetricsLambdaFirehosePermission:
+    Type: AWS::Lambda::Permission
+    Condition: TagEnrichmentEnabled
+    Properties:
+      FunctionName: !Ref MetricsTagEnrichmentLambda
+      Action: lambda:InvokeFunction
+      Principal: firehose.amazonaws.com
+      SourceArn: !Sub 'arn:aws:firehose:${AWS::Region}:${AWS::AccountId}:deliverystream/better-stack-metrics'
+      SourceAccount: !Ref AWS::AccountId
+
+  # Lambda permission for Firehose to invoke Logs enrichment
+  LogsLambdaFirehosePermission:
+    Type: AWS::Lambda::Permission
+    Condition: TagEnrichmentEnabled
+    Properties:
+      FunctionName: !Ref LogsTagEnrichmentLambda
+      Action: lambda:InvokeFunction
+      Principal: firehose.amazonaws.com
+      SourceArn: !Sub 'arn:aws:firehose:${AWS::Region}:${AWS::AccountId}:deliverystream/better-stack-logs'
+      SourceAccount: !Ref AWS::AccountId
+
+  # Firehose IAM policy for Lambda invocation (added to existing role)
+  FirehoseLambdaInvokePolicy:
+    Type: AWS::IAM::Policy
+    Condition: TagEnrichmentEnabled
+    Properties:
+      PolicyName: !Sub 'better-stack-firehose-lambda-invoke-${AWS::Region}'
+      Roles:
+        - !If
+          - ShouldCreateGlobalResources
+          - !Ref FirehoseRole
+          - !Sub 'better-stack-firehose-role'
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: LambdaInvoke
+            Effect: Allow
+            Action:
+              - lambda:InvokeFunction
+              - lambda:GetFunctionConfiguration
+            Resource:
+              - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:better-stack-metrics:*'
+              - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:better-stack-logs:*'
+
+  # Metrics Firehose Delivery Stream
+  MetricsFirehose:
+    Type: AWS::KinesisFirehose::DeliveryStream
+    DependsOn:
+      - MetricsFirehoseLogGroup
+    Properties:
+      DeliveryStreamName: !Sub 'better-stack-metrics'
+      DeliveryStreamType: DirectPut
+      HttpEndpointDestinationConfiguration:
+        EndpointConfiguration:
+          Url: !Sub 'https://${ClusterId}-aws-eu-central-1.betterstackdata.com/aws-firehose/metrics'
+          Name: Better Stack Metrics Ingest
+          AccessKey: !Ref SourceToken
+        BufferingHints:
+          SizeInMBs: 1
+          IntervalInSeconds: 60
+        RetryOptions:
+          DurationInSeconds: 300
+        S3BackupMode: FailedDataOnly
+        S3Configuration:
+          RoleARN: !If
+            - ShouldCreateGlobalResources
+            - !GetAtt FirehoseRole.Arn
+            - !Sub 'arn:aws:iam::${AWS::AccountId}:role/better-stack-firehose-role'
+          BucketARN: !GetAtt FirehoseBackupBucket.Arn
+          Prefix: 'metrics/failed/'
+          ErrorOutputPrefix: 'metrics/errors/'
+          BufferingHints:
+            SizeInMBs: 5
+            IntervalInSeconds: 300
+          CompressionFormat: GZIP
+        RequestConfiguration:
+          ContentEncoding: GZIP
+        CloudWatchLoggingOptions:
+          Enabled: true
+          LogGroupName: !Sub '/aws/kinesisfirehose/better-stack-metrics'
+          LogStreamName: DestinationDelivery
+        RoleARN: !If
+          - ShouldCreateGlobalResources
+          - !GetAtt FirehoseRole.Arn
+          - !Sub 'arn:aws:iam::${AWS::AccountId}:role/better-stack-firehose-role'
+        ProcessingConfiguration: !If
+          - TagEnrichmentEnabled
+          - Enabled: true
+            Processors:
+              - Type: Lambda
+                Parameters:
+                  - ParameterName: LambdaArn
+                    ParameterValue: !Sub '${MetricsTagEnrichmentLambda.Arn}:$LATEST'
+                  - ParameterName: BufferSizeInMBs
+                    ParameterValue: '0.5'
+                  - ParameterName: BufferIntervalInSeconds
+                    ParameterValue: '10'
+          - !Ref AWS::NoValue
+      Tags:
+        - Key: Solution
+          Value: BetterStack
+        - Key: BetterStackSourceId
+          Value: !Ref SourceId
+
+  # Logs Firehose Delivery Stream
+  LogsFirehose:
+    Type: AWS::KinesisFirehose::DeliveryStream
+    DependsOn:
+      - LogsFirehoseLogGroup
+    Properties:
+      DeliveryStreamName: !Sub 'better-stack-logs'
+      DeliveryStreamType: DirectPut
+      HttpEndpointDestinationConfiguration:
+        EndpointConfiguration:
+          Url: !Sub 'https://${ClusterId}-aws-eu-central-1.betterstackdata.com/aws-firehose'
+          Name: Better Stack Logs Ingest
+          AccessKey: !Ref SourceToken
+        BufferingHints:
+          SizeInMBs: 1
+          IntervalInSeconds: 60
+        RetryOptions:
+          DurationInSeconds: 300
+        S3BackupMode: FailedDataOnly
+        S3Configuration:
+          RoleARN: !If
+            - ShouldCreateGlobalResources
+            - !GetAtt FirehoseRole.Arn
+            - !Sub 'arn:aws:iam::${AWS::AccountId}:role/better-stack-firehose-role'
+          BucketARN: !GetAtt FirehoseBackupBucket.Arn
+          Prefix: 'logs/failed/'
+          ErrorOutputPrefix: 'logs/errors/'
+          BufferingHints:
+            SizeInMBs: 5
+            IntervalInSeconds: 300
+          CompressionFormat: GZIP
+        RequestConfiguration:
+          ContentEncoding: GZIP
+        CloudWatchLoggingOptions:
+          Enabled: true
+          LogGroupName: !Sub '/aws/kinesisfirehose/better-stack-logs'
+          LogStreamName: DestinationDelivery
+        RoleARN: !If
+          - ShouldCreateGlobalResources
+          - !GetAtt FirehoseRole.Arn
+          - !Sub 'arn:aws:iam::${AWS::AccountId}:role/better-stack-firehose-role'
+        ProcessingConfiguration: !If
+          - TagEnrichmentEnabled
+          - Enabled: true
+            Processors:
+              - Type: Lambda
+                Parameters:
+                  - ParameterName: LambdaArn
+                    ParameterValue: !Sub '${LogsTagEnrichmentLambda.Arn}:$LATEST'
+                  - ParameterName: BufferSizeInMBs
+                    ParameterValue: '0.5'
+                  - ParameterName: BufferIntervalInSeconds
+                    ParameterValue: '10'
+          - !Ref AWS::NoValue
+      Tags:
+        - Key: Solution
+          Value: BetterStack
+        - Key: BetterStackSourceId
+          Value: !Ref SourceId
+
+  # CloudWatch Metric Stream
+  MetricStream:
+    Type: AWS::CloudWatch::MetricStream
+    Properties:
+      Name: !Sub 'better-stack-metric-stream'
+      FirehoseArn: !GetAtt MetricsFirehose.Arn
+      RoleArn: !If
+        - ShouldCreateGlobalResources
+        - !GetAtt MetricStreamRole.Arn
+        - !Sub 'arn:aws:iam::${AWS::AccountId}:role/better-stack-metric-stream-role'
+      OutputFormat: json
+      Tags:
+        - Key: Solution
+          Value: BetterStack
+        - Key: BetterStackSourceId
+          Value: !Ref SourceId
+
+  # =============================================================================
+  # OPTIONAL: CloudTrail (when EnableCloudTrail=true AND CreateGlobalResources=true)
+  # CloudTrail is multi-region by default, so only created in first region deployment
+  # =============================================================================
+
+  CloudTrailBucket:
+    Type: AWS::S3::Bucket
+    Condition: ShouldCreateCloudTrail
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub 'better-stack-cloudtrail-${AWS::AccountId}-${AWS::Region}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Solution
+          Value: BetterStack
+
+  CloudTrailBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Condition: ShouldCreateCloudTrail
+    Properties:
+      Bucket: !Ref CloudTrailBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AWSCloudTrailAclCheck
+            Effect: Allow
+            Principal:
+              Service: cloudtrail.amazonaws.com
+            Action: s3:GetBucketAcl
+            Resource: !GetAtt CloudTrailBucket.Arn
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+          - Sid: AWSCloudTrailWrite
+            Effect: Allow
+            Principal:
+              Service: cloudtrail.amazonaws.com
+            Action: s3:PutObject
+            Resource: !Sub '${CloudTrailBucket.Arn}/AWSLogs/${AWS::AccountId}/*'
+            Condition:
+              StringEquals:
+                s3:x-amz-acl: bucket-owner-full-control
+                aws:SourceAccount: !Ref AWS::AccountId
+
+  CloudTrailLogGroup:
+    Type: AWS::Logs::LogGroup
+    Condition: ShouldCreateCloudTrail
+    Properties:
+      LogGroupName: !Sub '/aws/cloudtrail/better-stack'
+      RetentionInDays: 1
+      Tags:
+        - Key: Solution
+          Value: BetterStack
+
+  CloudTrailRole:
+    Type: AWS::IAM::Role
+    Condition: ShouldCreateCloudTrail
+    Properties:
+      RoleName: !Sub 'better-stack-cloudtrail-logs-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudtrail.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CloudWatchLogsWrite
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: LogsWrite
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/cloudtrail/better-stack:*'
+      Tags:
+        - Key: Solution
+          Value: BetterStack
+
+  CloudTrail:
+    Type: AWS::CloudTrail::Trail
+    Condition: ShouldCreateCloudTrail
+    DependsOn:
+      - CloudTrailBucketPolicy
+    Properties:
+      TrailName: !Sub 'better-stack-trail'
+      S3BucketName: !Ref CloudTrailBucket
+      IsMultiRegionTrail: true
+      IncludeGlobalServiceEvents: true
+      EnableLogFileValidation: true
+      CloudWatchLogsLogGroupArn: !GetAtt CloudTrailLogGroup.Arn
+      CloudWatchLogsRoleArn: !GetAtt CloudTrailRole.Arn
+      IsLogging: true
+      Tags:
+        - Key: Solution
+          Value: BetterStack
+
+  # =============================================================================
+  # OPTIONAL: X-Ray Transaction Search (when EnableXRayTransactionSearch=true)
+  # =============================================================================
+
+  XRayLogsResourcePolicy:
+    Type: AWS::Logs::ResourcePolicy
+    Condition: XRayEnabled
+    Properties:
+      PolicyName: XRayTransactionSearchAccess
+      PolicyDocument: !Sub |
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "TransactionSearchXRayAccess",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "xray.amazonaws.com"
+              },
+              "Action": "logs:PutLogEvents",
+              "Resource": [
+                "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:aws/spans:*",
+                "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/application-signals/data:*"
+              ],
+              "Condition": {
+                "ArnLike": {
+                  "aws:SourceArn": "arn:aws:xray:${AWS::Region}:${AWS::AccountId}:*"
+                },
+                "StringEquals": {
+                  "aws:SourceAccount": "${AWS::AccountId}"
+                }
+              }
+            }
+          ]
+        }
+
+  # Enable X-Ray Transaction Search - automatically configures trace segment destination
+  XRayTransactionSearchConfig:
+    Type: AWS::XRay::TransactionSearchConfig
+    Condition: XRayEnabled
+    DependsOn:
+      - XRayLogsResourcePolicy
+    Properties:
+      IndexingPercentage: 1
+
+Outputs:
+  IntegrationRoleArn:
+    Description: STS role ARN to provide to Better Stack
+    Condition: ShouldCreateGlobalResources
+    Value: !GetAtt IntegrationRole.Arn
+
+  ExternalId:
+    Description: External ID to provide to Better Stack
+    Condition: ShouldCreateGlobalResources
+    Value: !Join ['', ['bs-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]]
