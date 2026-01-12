@@ -98,7 +98,7 @@ Resources:
     Type: AWS::IAM::Role
     Condition: ShouldCreateGlobalResources
     Properties:
-      RoleName: !Sub 'better-stack-firehose-role'
+      RoleName: !Sub 'betterstack-firehose-role'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -121,8 +121,8 @@ Resources:
                   - s3:GetBucketLocation
                   - s3:ListBucket
                 Resource:
-                  - !Sub 'arn:aws:s3:::better-stack-firehose-${AWS::AccountId}-*'
-                  - !Sub 'arn:aws:s3:::better-stack-firehose-${AWS::AccountId}-*/*'
+                  - !Sub 'arn:aws:s3:::betterstack-firehose-${AWS::AccountId}-*'
+                  - !Sub 'arn:aws:s3:::betterstack-firehose-${AWS::AccountId}-*/*'
         - PolicyName: CloudWatchLogsPermissions
           PolicyDocument:
             Version: '2012-10-17'
@@ -134,7 +134,7 @@ Resources:
                   - logs:CreateLogStream
                   - logs:CreateLogGroup
                 Resource:
-                  - !Sub 'arn:aws:logs:*:${AWS::AccountId}:log-group:/aws/kinesisfirehose/better-stack-*:*'
+                  - !Sub 'arn:aws:logs:*:${AWS::AccountId}:log-group:/aws/kinesisfirehose/betterstack-*:*'
       Tags:
         - Key: Solution
           Value: BetterStack
@@ -144,7 +144,7 @@ Resources:
     Type: AWS::IAM::Role
     Condition: ShouldCreateGlobalResources
     Properties:
-      RoleName: !Sub 'better-stack-metric-stream-role'
+      RoleName: !Sub 'betterstack-metric-stream-role'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -162,7 +162,7 @@ Resources:
                 Action:
                   - firehose:PutRecord
                   - firehose:PutRecordBatch
-                Resource: !Sub 'arn:aws:firehose:*:${AWS::AccountId}:deliverystream/better-stack-metrics'
+                Resource: !Sub 'arn:aws:firehose:*:${AWS::AccountId}:deliverystream/betterstack-metrics'
       Tags:
         - Key: Solution
           Value: BetterStack
@@ -172,7 +172,7 @@ Resources:
     Type: AWS::IAM::Role
     Condition: ShouldCreateGlobalResources
     Properties:
-      RoleName: !Sub 'better-stack-logs-subscription-role'
+      RoleName: !Sub 'betterstack-logs-subscription-role'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -193,7 +193,7 @@ Resources:
                 Action:
                   - firehose:PutRecord
                   - firehose:PutRecordBatch
-                Resource: !Sub 'arn:aws:firehose:*:${AWS::AccountId}:deliverystream/better-stack-logs'
+                Resource: !Sub 'arn:aws:firehose:*:${AWS::AccountId}:deliverystream/betterstack-logs'
       Tags:
         - Key: Solution
           Value: BetterStack
@@ -203,7 +203,7 @@ Resources:
     Type: AWS::IAM::Role
     Condition: CreateTagEnrichmentLambdaRole
     Properties:
-      RoleName: !Sub 'better-stack-tag-enrichment-role'
+      RoleName: !Sub 'betterstack-tag-enrichment-role'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -252,7 +252,7 @@ Resources:
     Type: AWS::IAM::Role
     Condition: ShouldCreateGlobalResources
     Properties:
-      RoleName: !Sub 'better-stack-integration-role'
+      RoleName: !Sub 'betterstack-integration-role'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -385,7 +385,7 @@ Resources:
                 Effect: Allow
                 Action:
                   - iam:PassRole
-                Resource: !Sub 'arn:aws:iam::${AWS::AccountId}:role/better-stack-logs-subscription-role'
+                Resource: !Sub 'arn:aws:iam::${AWS::AccountId}:role/betterstack-logs-subscription-role'
       Tags:
         - Key: Solution
           Value: BetterStack

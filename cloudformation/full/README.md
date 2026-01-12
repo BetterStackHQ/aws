@@ -2,6 +2,8 @@
 
 Stream AWS CloudWatch metrics, logs, and optionally X-Ray traces and CloudTrail audit logs to Better Stack via Kinesis Data Firehose.
 
+See the [main README](../../README.md) for an overview or the [Lambda documentation](../../lambda/README.md) for details on deployed lambdas.
+
 ## Prerequisites
 
 1. **Better Stack Account** - Sign up at [betterstack.com](https://betterstack.com)
@@ -111,7 +113,7 @@ After deployment, provide these values to Better Stack:
 
 ## Tag Enrichment
 
-When `EnableTagEnrichment=true`, Lambda functions enrich metrics and logs with AWS resource tags.
+When `EnableTagEnrichment=true`, [Lambda functions](../../lambda/README.md) enrich metrics and logs with AWS resource tags.
 
 **Metrics enrichment** adds tags from:
 - EC2 instances
@@ -130,7 +132,7 @@ When `EnableTagEnrichment=true`, Lambda functions enrich metrics and logs with A
 - `/ecs/{cluster}/...` -> ECS tags
 - `/aws/api-gateway/{api-id}` -> API Gateway tags
 
-Lambda code is loaded from regional S3 buckets (`better-stack-lambda-{region}`).
+See the [Lambda README](../../lambda/README.md) for implementation details. Lambda code is deployed from regional S3 buckets (`better-stack-lambda-{region}`).
 
 ## Stack Outputs
 
