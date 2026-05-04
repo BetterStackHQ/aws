@@ -742,6 +742,11 @@ Resources:
         BlockPublicPolicy: true
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireCloudTrailLogs
+            Status: Enabled
+            ExpirationInDays: 7
       Tags:
         - Key: Solution
           Value: BetterStack
