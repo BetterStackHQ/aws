@@ -14,12 +14,16 @@ Metadata:
           default: Deployment Options
         Parameters:
           - CreateGlobalResources
+          - FirehoseRetryDurationSeconds
       - Label:
           default: Features
         Parameters:
           - EnableTagEnrichment
           - EnableCloudTrail
           - EnableXRayTransactionSearch
+    ParameterLabels:
+      FirehoseRetryDurationSeconds:
+        default: Firehose retry duration (seconds)
 
 Parameters:
   ClusterId:
@@ -71,6 +75,16 @@ Parameters:
     AllowedValues:
       - 'true'
       - 'false'
+
+  FirehoseRetryDurationSeconds:
+    Type: Number
+    Description: >-
+      How long (in seconds) Firehose keeps retrying delivery to Better Stack
+      before sending failed records to the S3 backup bucket. Default is 3600
+      (60 minutes). Maximum is 7200 (2 hours); set to 0 to disable retries.
+    Default: 3600
+    MinValue: 0
+    MaxValue: 7200
 
 Conditions:
   ShouldCreateGlobalResources: !Equals [!Ref CreateGlobalResources, 'true']
@@ -182,7 +196,10 @@ Resources:
             Action: sts:AssumeRole
             Condition:
               StringLike:
-                aws:SourceArn: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*'
+                # Role is global (created once), so allow CloudWatch Logs from any region
+                # in this account. Pinning ${AWS::Region} here freezes to the first-deployed
+                # region and breaks log subscriptions in every other region. See T-18856.
+                aws:SourceArn: !Sub 'arn:aws:logs:*:${AWS::AccountId}:*'
       Policies:
         - PolicyName: FirehoseWritePermissions
           PolicyDocument:
@@ -601,7 +618,7 @@ Resources:
           SizeInMBs: 1
           IntervalInSeconds: 60
         RetryOptions:
-          DurationInSeconds: 300
+          DurationInSeconds: !Ref FirehoseRetryDurationSeconds
         S3BackupMode: FailedDataOnly
         S3Configuration:
           RoleARN: !If
@@ -661,7 +678,7 @@ Resources:
           SizeInMBs: 1
           IntervalInSeconds: 60
         RetryOptions:
-          DurationInSeconds: 300
+          DurationInSeconds: !Ref FirehoseRetryDurationSeconds
         S3BackupMode: FailedDataOnly
         S3Configuration:
           RoleARN: !If
