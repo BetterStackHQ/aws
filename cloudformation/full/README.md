@@ -48,7 +48,8 @@ aws cloudformation deploy \
 
 | Data Type | Flow |
 |-----------|------|
-| Metrics | CloudWatch Metric Stream (JSON) -> Firehose -> Lambda (enrichment) -> Better Stack |
+| Metrics (default) | CloudWatch Metric Stream (JSON, per-namespace opt-in) -> Firehose -> Lambda (enrichment) -> Better Stack |
+| Metrics (`EnableMetricStream=false`) | Better Stack pulls metrics via the CloudWatch API (`GetMetricData`) using the integration role |
 | Logs | CloudWatch Logs -> Subscription Filter -> Firehose -> Lambda (enrichment) -> Better Stack |
 | Traces | X-Ray -> CloudWatch Logs (`aws/spans`) -> Subscription Filter -> Better Stack |
 | Audit | CloudTrail -> CloudWatch Logs -> Subscription Filter -> Better Stack |
@@ -74,9 +75,52 @@ aws cloudformation deploy \
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
+| `EnableMetricStream` | `true` | Stream metrics via a CloudWatch Metric Stream + Firehose. Set to `false` to use legacy API polling (see below). |
 | `EnableTagEnrichment` | `true` | Enable Lambda-based tag enrichment for metrics and logs |
 | `EnableCloudTrail` | `true` | Create a new CloudTrail trail and forward to Better Stack |
 | `EnableXRayTransactionSearch` | `true` | Enable X-Ray Transaction Search and forward spans |
+
+## Metric Collection: Stream vs. Legacy API Polling
+
+By default (`EnableMetricStream=true`) metrics are streamed to Better Stack in near
+real-time through a CloudWatch Metric Stream and Kinesis Data Firehose.
+
+Set `EnableMetricStream=false` to switch to the **legacy** approach, where Better Stack
+periodically pulls metrics from the CloudWatch API (`GetMetricData` / `ListMetrics`)
+using the integration role. This is useful where metric streaming is undesirable (e.g.
+to avoid per-region streaming resources or Firehose ingestion cost). When disabled, the
+template does **not** create the metric stream, the metrics Firehose, or the metrics
+tag-enrichment Lambda — logs, traces, and CloudTrail are unaffected.
+
+The `better-stack-integration-role` already grants `cloudwatch:Get*` / `cloudwatch:List*`
+on all resources, so Better Stack can read every metric via the API without any extra
+permissions.
+
+### Metric namespace subscription (explicit opt-in)
+
+When streaming is enabled, the metric stream is created with an `IncludeFilters`
+allowlist seeded with a single placeholder namespace (`BetterStack/Unsubscribed`) that
+has no metrics. **Nothing is streamed until you subscribe to specific namespaces in
+Better Stack**, which updates the stream's `IncludeFilters` via `cloudwatch:PutMetricStream`.
+This is deliberate: an *empty* `IncludeFilters` would stream **every** namespace, so the
+placeholder is what enforces opt-in.
+
+> **Re-deploys reset subscriptions.** Because CloudFormation owns the stream, running
+> `cloudformation deploy` again resets `IncludeFilters` back to the placeholder, dropping
+> the namespaces Better Stack added until it re-syncs your subscriptions. (Previously a
+> re-deploy reset the stream to "all namespaces" instead — the new default fails closed.)
+
+```bash
+aws cloudformation deploy \
+  --template-file better-stack-full.yaml \
+  --stack-name better-stack-full \
+  --parameter-overrides \
+    ClusterId=YOUR_CLUSTER_ID \
+    SourceToken=YOUR_SOURCE_TOKEN \
+    SourceId=YOUR_SOURCE_ID \
+    EnableMetricStream=false \
+  --capabilities CAPABILITY_NAMED_IAM
+```
 
 ## CloudTrail Notes
 
@@ -165,6 +209,8 @@ aws logs filter-log-events \
 ```
 
 ### Verify Metric Stream Status
+
+Only applicable when `EnableMetricStream=true` (the default). With legacy API polling there is no metric stream to inspect.
 
 ```bash
 aws cloudwatch get-metric-stream --name better-stack-metric-stream

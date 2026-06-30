@@ -18,12 +18,15 @@ Metadata:
       - Label:
           default: Features
         Parameters:
+          - EnableMetricStream
           - EnableTagEnrichment
           - EnableCloudTrail
           - EnableXRayTransactionSearch
     ParameterLabels:
       FirehoseRetryDurationSeconds:
         default: Firehose retry duration (seconds)
+      EnableMetricStream:
+        default: Stream metrics (disable to pull via the CloudWatch API instead)
 
 Parameters:
   ClusterId:
@@ -47,6 +50,20 @@ Parameters:
   CreateGlobalResources:
     Type: String
     Description: Create IAM roles. Set to false for secondary regions.
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  EnableMetricStream:
+    Type: String
+    Description: >-
+      Stream CloudWatch metrics to Better Stack in near real-time via a
+      CloudWatch Metric Stream and Kinesis Data Firehose. Set to 'false' to use
+      the legacy approach where Better Stack pulls metrics via the CloudWatch
+      API (GetMetricData) using the integration role. Disabling also removes the
+      metrics Firehose and the metrics tag-enrichment Lambda; logs, traces, and
+      CloudTrail are unaffected.
     Default: 'true'
     AllowedValues:
       - 'true'
@@ -88,6 +105,7 @@ Parameters:
 
 Conditions:
   ShouldCreateGlobalResources: !Equals [!Ref CreateGlobalResources, 'true']
+  MetricStreamEnabled: !Equals [!Ref EnableMetricStream, 'true']
   TagEnrichmentEnabled: !Equals [!Ref EnableTagEnrichment, 'true']
   CloudTrailEnabled: !Equals [!Ref EnableCloudTrail, 'true']
   XRayEnabled: !Equals [!Ref EnableXRayTransactionSearch, 'true']
@@ -96,6 +114,17 @@ Conditions:
   CreateTagEnrichmentLambdaRole: !And
     - !Condition ShouldCreateGlobalResources
     - !Condition TagEnrichmentEnabled
+
+  # Metric Stream role is only needed when streaming metrics (not for API pull)
+  CreateMetricStreamRole: !And
+    - !Condition ShouldCreateGlobalResources
+    - !Condition MetricStreamEnabled
+
+  # The metrics enrichment Lambda only applies when streaming metrics; the logs
+  # enrichment Lambda is independent and gated on TagEnrichmentEnabled alone.
+  MetricsTagEnrichmentEnabled: !And
+    - !Condition TagEnrichmentEnabled
+    - !Condition MetricStreamEnabled
 
   # CloudTrail is multi-region, so only create once in first region
   ShouldCreateCloudTrail: !And
@@ -156,7 +185,7 @@ Resources:
   # IAM Role for CloudWatch Metric Stream
   MetricStreamRole:
     Type: AWS::IAM::Role
-    Condition: ShouldCreateGlobalResources
+    Condition: CreateMetricStreamRole
     Properties:
       RoleName: !Sub 'better-stack-metric-stream-role'
       AssumeRolePolicyDocument:
@@ -285,6 +314,10 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
+              # Grants read of all metric data via the CloudWatch API. cloudwatch:Get*
+              # covers GetMetricData / GetMetricStatistics and cloudwatch:List* covers
+              # ListMetrics, so Better Stack can pull every metric when the metric
+              # stream is disabled (EnableMetricStream=false). See T-18856.
               - Sid: CloudWatchRead
                 Effect: Allow
                 Action:
@@ -403,6 +436,13 @@ Resources:
                 Action:
                   - iam:PassRole
                 Resource: !Sub 'arn:aws:iam::${AWS::AccountId}:role/better-stack-logs-subscription-role'
+              # cloudwatch:PutMetricStream passes the metric-stream role to CloudWatch,
+              # so reconfiguring the stream is denied without iam:PassRole on it. See T-18856.
+              - Sid: PassMetricStreamRole
+                Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource: !Sub 'arn:aws:iam::${AWS::AccountId}:role/better-stack-metric-stream-role'
       Tags:
         - Key: Solution
           Value: BetterStack
@@ -441,6 +481,7 @@ Resources:
   # CloudWatch Log Group for Metrics Firehose errors
   MetricsFirehoseLogGroup:
     Type: AWS::Logs::LogGroup
+    Condition: MetricStreamEnabled
     Properties:
       LogGroupName: !Sub '/aws/kinesisfirehose/better-stack-metrics'
       RetentionInDays: 7
@@ -452,6 +493,7 @@ Resources:
 
   MetricsFirehoseLogStream:
     Type: AWS::Logs::LogStream
+    Condition: MetricStreamEnabled
     Properties:
       LogGroupName: !Ref MetricsFirehoseLogGroup
       LogStreamName: DestinationDelivery
@@ -477,7 +519,7 @@ Resources:
   # Log Group for Metrics Tag Enrichment Lambda
   MetricsLambdaLogGroup:
     Type: AWS::Logs::LogGroup
-    Condition: TagEnrichmentEnabled
+    Condition: MetricsTagEnrichmentEnabled
     Properties:
       LogGroupName: /aws/lambda/better-stack-metrics
       RetentionInDays: 7
@@ -493,7 +535,7 @@ Resources:
   # Metrics Tag Enrichment Lambda
   MetricsTagEnrichmentLambda:
     Type: AWS::Lambda::Function
-    Condition: TagEnrichmentEnabled
+    Condition: MetricsTagEnrichmentEnabled
     DependsOn:
       - MetricsFirehoseLogGroup
       - MetricsLambdaLogGroup
@@ -559,7 +601,7 @@ Resources:
   # Lambda permission for Firehose to invoke Metrics enrichment
   MetricsLambdaFirehosePermission:
     Type: AWS::Lambda::Permission
-    Condition: TagEnrichmentEnabled
+    Condition: MetricsTagEnrichmentEnabled
     Properties:
       FunctionName: !Ref MetricsTagEnrichmentLambda
       Action: lambda:InvokeFunction
@@ -597,13 +639,18 @@ Resources:
             Action:
               - lambda:InvokeFunction
               - lambda:GetFunctionConfiguration
-            Resource:
-              - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:better-stack-metrics:*'
-              - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:better-stack-logs:*'
+            # Only grant the metrics Lambda ARN when the metric stream (and its
+            # enrichment Lambda) exists; otherwise just the logs Lambda.
+            Resource: !If
+              - MetricsTagEnrichmentEnabled
+              - - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:better-stack-metrics:*'
+                - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:better-stack-logs:*'
+              - - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:better-stack-logs:*'
 
   # Metrics Firehose Delivery Stream
   MetricsFirehose:
     Type: AWS::KinesisFirehose::DeliveryStream
+    Condition: MetricStreamEnabled
     DependsOn:
       - MetricsFirehoseLogGroup
     Properties:
@@ -643,7 +690,7 @@ Resources:
           - !GetAtt FirehoseRole.Arn
           - !Sub 'arn:aws:iam::${AWS::AccountId}:role/better-stack-firehose-role'
         ProcessingConfiguration: !If
-          - TagEnrichmentEnabled
+          - MetricsTagEnrichmentEnabled
           - Enabled: true
             Processors:
               - Type: Lambda
@@ -724,6 +771,7 @@ Resources:
   # CloudWatch Metric Stream
   MetricStream:
     Type: AWS::CloudWatch::MetricStream
+    Condition: MetricStreamEnabled
     Properties:
       Name: !Sub 'better-stack-metric-stream'
       FirehoseArn: !GetAtt MetricsFirehose.Arn
@@ -732,6 +780,13 @@ Resources:
         - !GetAtt MetricStreamRole.Arn
         - !Sub 'arn:aws:iam::${AWS::AccountId}:role/better-stack-metric-stream-role'
       OutputFormat: json
+      # Explicit-subscription default: an IncludeFilters allowlist that matches a
+      # namespace with no metrics, so the stream sends nothing until a user
+      # subscribes. Better Stack then adds the chosen namespaces via
+      # PutMetricStream. NOTE: an empty IncludeFilters would stream EVERY
+      # namespace, which is exactly what we want to avoid here. See T-18856.
+      IncludeFilters:
+        - Namespace: BetterStack/Unsubscribed
       Tags:
         - Key: Solution
           Value: BetterStack
