@@ -29,7 +29,9 @@ aws cloudformation deploy \
 
 ### Additional Regions
 
-When deploying to additional regions, set `CreateGlobalResources=false` to reuse the IAM roles created in the first region:
+**Deploy the first region before any additional region.** The first-region deployment (`CreateGlobalResources=true`) provisions the account-wide IAM roles that *every* region relies on. It creates **all** of the shared roles — metric-stream, tag-enrichment, Firehose, logs-subscription, and bucket-manager — regardless of which features that first region itself has enabled. This means an additional region can safely turn on any feature (e.g. `EnableMetricStream=true`) even if the first region runs in a different mode.
+
+When deploying to additional regions, set `CreateGlobalResources=false` to reuse those IAM roles:
 
 ```bash
 aws cloudformation deploy \
