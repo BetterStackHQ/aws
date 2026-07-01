@@ -224,7 +224,11 @@ To delete the stack:
 aws cloudformation delete-stack --stack-name better-stack-full
 ```
 
-**Note**: S3 buckets have `DeletionPolicy: Retain` to preserve any failed delivery data and CloudTrail logs. Delete manually if needed:
+**Note on S3 buckets**: The Firehose backup and CloudTrail buckets are **retained** on stack deletion, so any failed-delivery data and CloudTrail logs are preserved. You do **not** need to empty or delete them before re-deploying — the stack creates each bucket, or adopts the existing one if a previous deployment left it behind, so a delete/re-deploy cycle just re-uses the same buckets.
+
+Everything else (Lambdas, IAM roles, log groups, Firehose streams, etc.) is removed with the stack as normal.
+
+If you want to remove the retained buckets permanently, delete them manually after deleting the stack:
 
 ```bash
 # Delete Firehose backup bucket

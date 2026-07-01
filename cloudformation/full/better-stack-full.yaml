@@ -293,6 +293,43 @@ Resources:
         - Key: Solution
           Value: BetterStack
 
+  # IAM Role for the S3 bucket-manager Lambda (global - created once)
+  # Backs the create-or-adopt custom resource so buckets survive stack
+  # deletion and are re-adopted (not recreated) on the next deployment.
+  BucketManagerRole:
+    Type: AWS::IAM::Role
+    Condition: ShouldCreateGlobalResources
+    Properties:
+      RoleName: !Sub 'better-stack-bucket-manager-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: BucketManagementPermissions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: BucketManagement
+                Effect: Allow
+                Action:
+                  - s3:CreateBucket
+                  - s3:PutEncryptionConfiguration
+                  - s3:PutBucketPublicAccessBlock
+                  - s3:PutLifecycleConfiguration
+                  - s3:PutBucketTagging
+                Resource:
+                  - !Sub 'arn:aws:s3:::better-stack-firehose-${AWS::AccountId}-*'
+                  - !Sub 'arn:aws:s3:::better-stack-cloudtrail-${AWS::AccountId}-*'
+      Tags:
+        - Key: Solution
+          Value: BetterStack
+
   # Better Stack Integration Role (STS cross-account access)
   IntegrationRole:
     Type: AWS::IAM::Role
@@ -459,27 +496,140 @@ Resources:
   # REGIONAL RESOURCES (always created)
   # =============================================================================
 
-  # S3 Backup Bucket for failed Firehose deliveries (per-region)
+  # Log group for the bucket-manager Lambda (per-region)
+  BucketManagerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/better-stack-bucket-manager
+      RetentionInDays: 7
+      Tags:
+        - Key: Solution
+          Value: BetterStack
+
+  # Bucket-manager Lambda backing the Custom::S3Bucket resources below.
+  # It creates each bucket, or adopts it if a previous deployment retained it,
+  # then (re-)asserts the encryption, public-access-block, lifecycle and tag
+  # configuration. Deletes are intentional no-ops so buckets (and any retained
+  # failed-delivery / audit data) survive stack deletion.
+  BucketManagerFunction:
+    Type: AWS::Lambda::Function
+    DependsOn:
+      - BucketManagerLogGroup
+    Properties:
+      FunctionName: better-stack-bucket-manager
+      Description: Creates or adopts Better Stack S3 buckets so the stack can be redeployed after deletion
+      Runtime: python3.13
+      Handler: index.handler
+      Timeout: 60
+      MemorySize: 128
+      Role: !If
+        - ShouldCreateGlobalResources
+        - !GetAtt BucketManagerRole.Arn
+        - !Sub 'arn:aws:iam::${AWS::AccountId}:role/better-stack-bucket-manager-role'
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import urllib.request
+
+          s3 = boto3.client('s3')
+
+
+          def send(event, context, status, data, physical_id):
+              body = json.dumps({
+                  'Status': status,
+                  'Reason': 'See CloudWatch Log Stream: ' + context.log_stream_name,
+                  'PhysicalResourceId': physical_id,
+                  'StackId': event['StackId'],
+                  'RequestId': event['RequestId'],
+                  'LogicalResourceId': event['LogicalResourceId'],
+                  'NoEcho': False,
+                  'Data': data,
+              }).encode('utf-8')
+              req = urllib.request.Request(
+                  url=event['ResponseURL'],
+                  data=body,
+                  method='PUT',
+                  headers={'content-type': '', 'content-length': str(len(body))},
+              )
+              urllib.request.urlopen(req)
+
+
+          def handler(event, context):
+              props = event.get('ResourceProperties', {})
+              bucket = props['BucketName']
+              physical_id = bucket
+              try:
+                  if event['RequestType'] in ('Create', 'Update'):
+                      region = s3.meta.region_name
+                      try:
+                          if region == 'us-east-1':
+                              s3.create_bucket(Bucket=bucket)
+                          else:
+                              s3.create_bucket(
+                                  Bucket=bucket,
+                                  CreateBucketConfiguration={'LocationConstraint': region},
+                              )
+                      except s3.exceptions.BucketAlreadyOwnedByYou:
+                          pass  # Retained from a previous deployment - adopt it.
+
+                      s3.put_bucket_encryption(
+                          Bucket=bucket,
+                          ServerSideEncryptionConfiguration={
+                              'Rules': [{'ApplyServerSideEncryptionByDefault': {'SSEAlgorithm': 'AES256'}}],
+                          },
+                      )
+                      s3.put_public_access_block(
+                          Bucket=bucket,
+                          PublicAccessBlockConfiguration={
+                              'BlockPublicAcls': True,
+                              'IgnorePublicAcls': True,
+                              'BlockPublicPolicy': True,
+                              'RestrictPublicBuckets': True,
+                          },
+                      )
+                      s3.put_bucket_lifecycle_configuration(
+                          Bucket=bucket,
+                          LifecycleConfiguration={
+                              'Rules': [{
+                                  'ID': props['LifecycleRuleId'],
+                                  'Status': 'Enabled',
+                                  'Filter': {'Prefix': ''},
+                                  'Expiration': {'Days': int(props['ExpirationInDays'])},
+                              }],
+                          },
+                      )
+                      tags = props.get('Tags', [])
+                      if tags:
+                          s3.put_bucket_tagging(
+                              Bucket=bucket,
+                              Tagging={'TagSet': [{'Key': t['Key'], 'Value': t['Value']} for t in tags]},
+                          )
+                  # Delete is a deliberate no-op: buckets are retained across stack deletion.
+                  send(event, context, 'SUCCESS',
+                       {'Arn': 'arn:aws:s3:::' + bucket, 'BucketName': bucket}, physical_id)
+              except Exception as e:
+                  print('Error: ' + repr(e))
+                  send(event, context, 'FAILED', {'Error': str(e)}, physical_id)
+      Tags:
+        - Key: Solution
+          Value: BetterStack
+
+  # S3 Backup Bucket for failed Firehose deliveries (per-region).
+  # Created-or-adopted via the bucket-manager Lambda so a delete/redeploy cycle
+  # re-uses the existing bucket instead of failing on "bucket already exists".
+  # DeletionPolicy: Retain here means CloudFormation does not send a Delete to the
+  # Lambda on stack teardown - the bucket persists anyway (it isn't a CFN-managed
+  # resource), and this keeps stack deletion from depending on the Lambda.
   FirehoseBackupBucket:
-    Type: AWS::S3::Bucket
+    Type: Custom::S3Bucket
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
+      ServiceToken: !GetAtt BucketManagerFunction.Arn
       BucketName: !Sub 'better-stack-firehose-${AWS::AccountId}-${AWS::Region}'
-      BucketEncryption:
-        ServerSideEncryptionConfiguration:
-          - ServerSideEncryptionByDefault:
-              SSEAlgorithm: AES256
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        BlockPublicPolicy: true
-        IgnorePublicAcls: true
-        RestrictPublicBuckets: true
-      LifecycleConfiguration:
-        Rules:
-          - Id: ExpireFailedDeliveries
-            Status: Enabled
-            ExpirationInDays: 7
+      LifecycleRuleId: ExpireFailedDeliveries
+      ExpirationInDays: 7
       Tags:
         - Key: Solution
           Value: BetterStack
@@ -806,27 +956,18 @@ Resources:
   # CloudTrail is multi-region by default, so only created in first region deployment
   # =============================================================================
 
+  # Created-or-adopted via the bucket-manager Lambda (see FirehoseBackupBucket)
+  # so a delete/redeploy cycle re-uses the existing bucket.
   CloudTrailBucket:
-    Type: AWS::S3::Bucket
+    Type: Custom::S3Bucket
     Condition: ShouldCreateCloudTrail
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
+      ServiceToken: !GetAtt BucketManagerFunction.Arn
       BucketName: !Sub 'better-stack-cloudtrail-${AWS::AccountId}-${AWS::Region}'
-      BucketEncryption:
-        ServerSideEncryptionConfiguration:
-          - ServerSideEncryptionByDefault:
-              SSEAlgorithm: AES256
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        BlockPublicPolicy: true
-        IgnorePublicAcls: true
-        RestrictPublicBuckets: true
-      LifecycleConfiguration:
-        Rules:
-          - Id: ExpireCloudTrailLogs
-            Status: Enabled
-            ExpirationInDays: 7
+      LifecycleRuleId: ExpireCloudTrailLogs
+      ExpirationInDays: 7
       Tags:
         - Key: Solution
           Value: BetterStack
