@@ -943,13 +943,9 @@ Resources:
         - !GetAtt MetricStreamRole.Arn
         - !Sub 'arn:aws:iam::${AWS::AccountId}:role/better-stack-metric-stream-role'
       OutputFormat: json
-      # Explicit-subscription default: an IncludeFilters allowlist that matches a
-      # namespace with no metrics, so the stream sends nothing until a user
-      # subscribes. Better Stack then adds the chosen namespaces via
-      # PutMetricStream. NOTE: an empty IncludeFilters would stream EVERY
-      # namespace, which is exactly what we want to avoid here. See T-18856.
-      IncludeFilters:
-        - Namespace: BetterStack/Unsubscribed
+      # No IncludeFilters: the stream forwards every namespace by default, matching how
+      # log subscriptions default to on. Better Stack narrows it to your selection via
+      # PutMetricStream (deselecting everything writes a BetterStack/Unsubscribed placeholder).
       Tags:
         - Key: Solution
           Value: BetterStack
