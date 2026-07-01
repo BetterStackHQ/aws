@@ -50,7 +50,7 @@ aws cloudformation deploy \
 
 | Data Type | Flow |
 |-----------|------|
-| Metrics (default) | CloudWatch Metric Stream (JSON, per-namespace opt-in) -> Firehose -> Lambda (enrichment) -> Better Stack |
+| Metrics (default) | CloudWatch Metric Stream (JSON, all namespaces by default) -> Firehose -> Lambda (enrichment) -> Better Stack |
 | Metrics (`EnableMetricStream=false`) | Better Stack pulls metrics via the CloudWatch API (`GetMetricData`) using the integration role |
 | Logs | CloudWatch Logs -> Subscription Filter -> Firehose -> Lambda (enrichment) -> Better Stack |
 | Traces | X-Ray -> CloudWatch Logs (`aws/spans`) -> Subscription Filter -> Better Stack |
@@ -98,19 +98,17 @@ The `better-stack-integration-role` already grants `cloudwatch:Get*` / `cloudwat
 on all resources, so Better Stack can read every metric via the API without any extra
 permissions.
 
-### Metric namespace subscription (explicit opt-in)
+### Metric namespace subscription
 
-When streaming is enabled, the metric stream is created with an `IncludeFilters`
-allowlist seeded with a single placeholder namespace (`BetterStack/Unsubscribed`) that
-has no metrics. **Nothing is streamed until you subscribe to specific namespaces in
-Better Stack**, which updates the stream's `IncludeFilters` via `cloudwatch:PutMetricStream`.
-This is deliberate: an *empty* `IncludeFilters` would stream **every** namespace, so the
-placeholder is what enforces opt-in.
+When streaming is enabled, the metric stream is created with no `IncludeFilters`, so it
+forwards **every** namespace by default — matching how log subscriptions default to on.
+Narrow the set in Better Stack, which updates the stream's `IncludeFilters` via
+`cloudwatch:PutMetricStream` (deselecting everything writes a `BetterStack/Unsubscribed`
+placeholder namespace so the stream sends nothing).
 
 > **Re-deploys reset subscriptions.** Because CloudFormation owns the stream, running
-> `cloudformation deploy` again resets `IncludeFilters` back to the placeholder, dropping
-> the namespaces Better Stack added until it re-syncs your subscriptions. (Previously a
-> re-deploy reset the stream to "all namespaces" instead — the new default fails closed.)
+> `cloudformation deploy` again clears `IncludeFilters` back to "all namespaces", until
+> Better Stack re-applies your selection on the next sync.
 
 ```bash
 aws cloudformation deploy \
