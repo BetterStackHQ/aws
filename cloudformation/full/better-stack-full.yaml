@@ -111,14 +111,15 @@ Conditions:
   XRayEnabled: !Equals [!Ref EnableXRayTransactionSearch, 'true']
 
   # Compound conditions
-  CreateTagEnrichmentLambdaRole: !And
-    - !Condition ShouldCreateGlobalResources
-    - !Condition TagEnrichmentEnabled
 
-  # Metric Stream role is only needed when streaming metrics (not for API pull)
-  CreateMetricStreamRole: !And
-    - !Condition ShouldCreateGlobalResources
-    - !Condition MetricStreamEnabled
+  # NOTE: the shared IAM roles (metric-stream, tag-enrichment, etc.) are gated on
+  # ShouldCreateGlobalResources ALONE, not on their feature flag. They are global,
+  # account-wide roles referenced by ARN from every region; the global region
+  # cannot know which features a secondary region will enable, so it must always
+  # provision them. Gating them on the feature flag lets a secondary region create
+  # a stream/Lambda that references a role the global region never made (100%
+  # PublishErrorRate / "role cannot be assumed"). The feature flags still gate the
+  # actual streams and Lambdas below - only the inert roles are always created.
 
   # The metrics enrichment Lambda only applies when streaming metrics; the logs
   # enrichment Lambda is independent and gated on TagEnrichmentEnabled alone.
@@ -183,9 +184,11 @@ Resources:
           Value: BetterStack
 
   # IAM Role for CloudWatch Metric Stream
+  # Always created in the global region so any secondary region that enables
+  # metric streaming can assume it (see the Conditions note above).
   MetricStreamRole:
     Type: AWS::IAM::Role
-    Condition: CreateMetricStreamRole
+    Condition: ShouldCreateGlobalResources
     Properties:
       RoleName: !Sub 'better-stack-metric-stream-role'
       AssumeRolePolicyDocument:
@@ -245,9 +248,11 @@ Resources:
           Value: BetterStack
 
   # IAM Role for Tag Enrichment Lambdas (global - created once)
+  # Always created in the global region so any secondary region that enables tag
+  # enrichment can assume it (see the Conditions note above).
   TagEnrichmentLambdaRole:
     Type: AWS::IAM::Role
-    Condition: CreateTagEnrichmentLambdaRole
+    Condition: ShouldCreateGlobalResources
     Properties:
       RoleName: !Sub 'better-stack-tag-enrichment-role'
       AssumeRolePolicyDocument:
