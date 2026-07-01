@@ -58,12 +58,12 @@ Parameters:
   EnableMetricStream:
     Type: String
     Description: >-
-      Stream CloudWatch metrics to Better Stack in near real-time via a
-      CloudWatch Metric Stream and Kinesis Data Firehose. Set to 'false' to use
-      the legacy approach where Better Stack pulls metrics via the CloudWatch
-      API (GetMetricData) using the integration role. Disabling also removes the
-      metrics Firehose and the metrics tag-enrichment Lambda; logs, traces, and
-      CloudTrail are unaffected.
+      How Better Stack collects your CloudWatch metrics. 'true' streams them in
+      near real-time via a CloudWatch Metric Stream and Kinesis Data Firehose.
+      'false' instead pulls them via the CloudWatch API (GetMetricData) using the
+      integration role, which can be significantly cheaper but adds latency of up
+      to 10 minutes. Pull mode also removes the metrics Firehose and the metrics
+      tag-enrichment Lambda; logs, traces, and CloudTrail are unaffected.
     Default: 'true'
     AllowedValues:
       - 'true'
@@ -412,6 +412,14 @@ Resources:
                   - cloudtrail:GetTrailStatus
                   - cloudtrail:ListTrails
                   - health:Describe*
+                Resource: '*'
+              - Sid: MetricProperties
+                Effect: Allow
+                Action:
+                  - ec2:DescribeInstances
+                  - ec2:DescribeVolumes
+                  - rds:DescribeDBInstances
+                  - lambda:ListFunctions
                 Resource: '*'
         - PolicyName: BetterStackWriteAccess
           PolicyDocument:
