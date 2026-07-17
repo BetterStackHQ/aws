@@ -15,7 +15,7 @@ jobs:
           - spec/lambda/firehose_metrics_tag_enrichment_spec.rb
           - spec/lambda/firehose_logs_tag_enrichment_spec.rb
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: ruby/setup-ruby@v1
         with:
