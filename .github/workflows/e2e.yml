@@ -4,13 +4,12 @@ name: "E2E"
 # deploys the stack with that source's ClusterId/SourceToken/SourceId, pastes the stack outputs back into the source,
 # checks that the sync auto-subscribes a new log group and leaves recreated ones alone (frozen behaviour, see the step
 # naming T-21948 and T-21949), subscribes those through the API, then produces logs, a custom metric, an X-Ray trace and
-# a CloudTrail management event in AWS and reads logs, spans and metrics back (CloudTrail rows are frozen at none, see
-# T-21951 in the read-back step)
-# through the team's SQL API connection with exact row counts. Pull requests and pushes to main deploy the template
-# from the checkout; the daily schedule deploys the published one and fails when it differs from main. Everything the
-# run creates in AWS and Better Stack is named after RUN_ID and deleted in the cleanup step, together with leftovers of
-# earlier runs older than two hours. The docs check fails when the docs article stops naming a template toggle or
-# output. Pull requests from forks are skipped: they get no OIDC token.
+# a CloudTrail management event in AWS and reads all of them back through the team's SQL API connection with exact row
+# counts. Pull requests and pushes to main deploy the template from the checkout; the daily schedule deploys the
+# published one and fails when it differs from main. Everything the run creates in AWS and Better Stack is named after
+# RUN_ID and deleted in the cleanup step, together with leftovers of earlier runs. A run that starts within an hour of
+# the previous run's stack deletion first waits for the hour to pass (see that step). The docs check fails when the
+# docs article stops naming a template toggle or output. Pull requests from forks are skipped: they get no OIDC token.
 # See the docs guide in https://betterstack.com/docs/logs/aws-cloudformation/
 #
 # AWS account: better-stack-e2e-aws-stack (251917137055), a member of the Better Stack organization that holds nothing
@@ -116,6 +115,32 @@ jobs:
       # deleted; sweeping first keeps such leftovers from failing this run.
       - name: "[Setup] Sweep leftovers of earlier runs"
         run: bash e2e/cleanup.sh
+
+      # Each run deletes the template's IAM roles and the next run recreates them under the same names, while AWS keeps
+      # using sessions of the deleted roles for up to an hour. CloudWatch Logs holds the subscription role's session per
+      # log group name: delivery with a deleted role's session fails with a non-retryable error, the filter pauses for
+      # 10 minutes, skips whatever arrives meanwhile, and fails again on every retry until the session expires, even
+      # when the log group is recreated with a new filter. aws/spans, /aws/cloudtrail/better-stack and the static group
+      # have the same names in every run. CloudTrail holds its role's session for writing into
+      # /aws/cloudtrail/better-stack the same way and writes nothing until it expires. Customers keep their roles.
+      - name: "[Setup] Wait until an hour has passed since the previous run deleted its stack"
+        id: cooldown
+        run: |
+          LAST=$(aws cloudformation list-stacks --stack-status-filter DELETE_COMPLETE --query "max(StackSummaries[?starts_with(StackName, 'e2e-gh')].DeletionTime)" --output text)
+          [ "$LAST" != None ] || { echo "no earlier stack in this account"; exit 0; }
+          WAIT=$(($(date -d "$LAST" +%s) + 3900 - $(date +%s)))
+          [ "$WAIT" -gt 0 ] || { echo "the previous stack was deleted at $LAST, over 65 min ago"; exit 0; }
+          echo "the previous stack was deleted at $LAST, waiting $((WAIT / 60 + 1)) min"
+          sleep "$WAIT"
+          echo "waited=true" >> "$GITHUB_OUTPUT"
+
+      - name: "[Setup] Fresh AWS credentials after the wait"
+        if: ${{ steps.cooldown.outputs.waited == 'true' }}
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-duration-seconds: 7200
 
       - name: "[Setup] Create AWS source"
         run: |
@@ -241,7 +266,7 @@ jobs:
             for group in "$STATIC_LOG_GROUP" aws/spans /aws/cloudtrail/better-stack; do
               aws logs describe-subscription-filters --log-group-name "$group" --query "subscriptionFilters[?filterName=='BetterStackLogs'].destinationArn" --output text 2>/dev/null | grep -q firehose || PENDING="$PENDING $group"
             done
-            [ -z "$PENDING" ] && { echo "all four log groups carry the BetterStackLogs subscription filter"; exit 0; }
+            [ -z "$PENDING" ] && { echo "all three log groups carry the BetterStackLogs subscription filter"; exit 0; }
             [ "$SECONDS" -lt "$DEADLINE" ] || { echo "::error::no BetterStackLogs subscription filter after 8 min on:$PENDING"; exit 1; }
             echo "waiting for subscriptions on:$PENDING"; sleep 15
           done
@@ -285,29 +310,38 @@ jobs:
           counts() {
             LOGS=$(count "remote(${COLLECTION}_logs) WHERE $SINCE AND position(raw, '$MARKER') > 0 AND position(raw, '\"log_group\":\"$LOG_GROUP\"') > 0")
             STATIC_LOGS=$(count "remote(${COLLECTION}_logs) WHERE $SINCE AND position(raw, '$MARKER') > 0 AND position(raw, '\"log_group\":\"$STATIC_LOG_GROUP\"') > 0")
-            # Any CloudTrail event at all; the trail writes dozens within minutes of the stack creation.
-            CLOUDTRAIL=$(count "remote(${COLLECTION}_logs) WHERE $SINCE AND position(raw, '\"eventSource\"') > 0")
+            # The mapper stores a CloudTrail event as {id, message: <the event>, context: {logGroup, ...}, dt}; this run's
+            # PutRetentionPolicy call names the run's log group.
+            CLOUDTRAIL=$(count "remote(${COLLECTION}_logs) WHERE $SINCE AND JSONExtractString(raw, 'context', 'logGroup') = '/aws/cloudtrail/better-stack' AND JSONExtractString(raw, 'message', 'eventName') = 'PutRetentionPolicy' AND JSONExtractString(raw, 'message', 'requestParameters', 'logGroupName') = '$LOG_GROUP'")
             # The mapper stores each X-Ray span as {dt, resource, span: {trace_id, span_id, name, ...}}.
             SPANS=$(count "remote(${COLLECTION}_spans) WHERE $SINCE AND JSONExtractString(raw, 'span', 'name') IN ('e2e-parent-$RUN_ID', 'e2e-child-$RUN_ID')")
             METRICS=$(count "remote(${COLLECTION}_metrics) WHERE $SINCE AND name = 'e2e_test.aws_stack.run_marker' AND toString(tags) LIKE '%$RUN_ID%'")
-            echo "logs $LOGS/20 + static $STATIC_LOGS/20, spans $SPANS/2, metric rows $METRICS, cloudtrail rows $CLOUDTRAIL (frozen at 0, see T-21951)"
+            echo "logs $LOGS/20 + static $STATIC_LOGS/20, spans $SPANS/2, metric rows $METRICS, CloudTrail event $CLOUDTRAIL/1"
           }
-          DEADLINE=$((SECONDS + 900))
+          # What CloudWatch Logs did with each group in the last 40 min; DeliveryErrors mean the filter paused for 10 min
+          # and skipped what arrived meanwhile.
+          forwarding() {
+            for group in "$LOG_GROUP" "$STATIC_LOG_GROUP" aws/spans /aws/cloudtrail/better-stack; do
+              for metric in IncomingLogEvents ForwardedLogEvents DeliveryErrors; do
+                DIMS="Name=LogGroupName,Value=$group"
+                [ "$metric" = IncomingLogEvents ] || DIMS="$DIMS Name=DestinationType,Value=Firehose Name=FilterName,Value=BetterStackLogs"
+                echo "$group $metric $(aws cloudwatch get-metric-statistics --namespace AWS/Logs --metric-name "$metric" --dimensions $DIMS \
+                  --start-time "$(date -u -d '-40 minutes' +%FT%TZ)" --end-time "$(date -u +%FT%TZ)" --period 2400 --statistics Sum --query 'sum(Datapoints[].Sum)' --output text)"
+              done
+            done
+          }
+          # CloudTrail hands events to CloudWatch Logs within about 5 min of the call, so allow 20 min.
+          DEADLINE=$((SECONDS + 1200))
           while :; do
             counts
-            [ "$LOGS" -ge 20 ] && [ "$STATIC_LOGS" -ge 20 ] && [ "$SPANS" -ge 2 ] && [ "$METRICS" -ge 1 ] && break
-            [ "$SECONDS" -lt "$DEADLINE" ] || { echo "::error::not everything arrived within 15 min"; mkdir -p out; sql "SELECT dt, raw FROM remote(${COLLECTION}_spans) WHERE $SINCE ORDER BY dt DESC LIMIT 3" > out/sample_spans.json; exit 1; }
+            [ "$LOGS" -ge 20 ] && [ "$STATIC_LOGS" -ge 20 ] && [ "$SPANS" -ge 2 ] && [ "$METRICS" -ge 1 ] && [ "$CLOUDTRAIL" -ge 1 ] && break
+            [ "$SECONDS" -lt "$DEADLINE" ] || { echo "::error::not everything arrived within 20 min"; forwarding; mkdir -p out; sql "SELECT dt, raw FROM remote(${COLLECTION}_spans) WHERE $SINCE ORDER BY dt DESC LIMIT 3" > out/sample_spans.json; exit 1; }
             sleep 20
           done
           # Everything arrived; a last look 60 s later catches duplicate delivery.
           sleep 60
           counts
-          [ "$LOGS" = 20 ] && [ "$STATIC_LOGS" = 20 ] && [ "$SPANS" = 2 ] || { echo "::error::unexpected row counts: logs $LOGS (20), static $STATIC_LOGS (20), spans $SPANS (2)"; exit 1; }
-          # Frozen behaviour: within the run's lifetime CloudWatch Logs forwards none of what CloudTrail writes into
-          # /aws/cloudtrail/better-stack to the Firehose, although the trail delivers and the subscription filter is in
-          # place (T-21951; production accounts with older stacks do receive CloudTrail rows). The trail has written
-          # dozens of events by now, so a working path shows rows here.
-          [ "$CLOUDTRAIL" = 0 ] || { echo "::error::$CLOUDTRAIL CloudTrail rows arrived within the run: the behaviour this test freezes has changed (see T-21951), update the test"; exit 1; }
+          [ "$LOGS" = 20 ] && [ "$STATIC_LOGS" = 20 ] && [ "$SPANS" = 2 ] && [ "$CLOUDTRAIL" = 1 ] || { echo "::error::unexpected row counts: logs $LOGS (20), static $STATIC_LOGS (20), spans $SPANS (2), CloudTrail event $CLOUDTRAIL (1)"; exit 1; }
           mkdir -p out
           sql "SELECT dt, raw FROM remote(${COLLECTION}_logs) WHERE $SINCE AND position(raw, '$MARKER') > 0 ORDER BY dt LIMIT 1" > out/sample_log.json
           sql "SELECT dt, raw FROM remote(${COLLECTION}_spans) WHERE $SINCE AND JSONExtractString(raw, 'span', 'name') IN ('e2e-parent-$RUN_ID', 'e2e-child-$RUN_ID') ORDER BY JSONExtractUInt(raw, 'span', 'start_time_unix_nano')" > out/sample_spans.json
@@ -315,12 +349,13 @@ jobs:
           STORED_TRACE_IDS=$(jq -r '.raw | fromjson | .span.trace_id' out/sample_spans.json | sort -u | tr '\n' ' ')
           [ "$STORED_TRACE_IDS" = "$TRACE_HEX " ] || { echo "::error::stored span trace ids '$STORED_TRACE_IDS' differ from the X-Ray trace id $TRACE_HEX"; exit 1; }
           sql "SELECT name, tags FROM remote(${COLLECTION}_metrics) WHERE $SINCE AND name = 'e2e_test.aws_stack.run_marker' GROUP BY name, tags LIMIT 3" > out/sample_metric.json
+          sql "SELECT dt, raw FROM remote(${COLLECTION}_logs) WHERE $SINCE AND JSONExtractString(raw, 'message', 'eventName') = 'PutRetentionPolicy' AND JSONExtractString(raw, 'message', 'requestParameters', 'logGroupName') = '$LOG_GROUP'" > out/sample_cloudtrail.json
           {
             echo "### AWS CloudFormation stack E2E \`$RUN_ID\`"
             echo
             echo "- template from $TEMPLATE_FROM, source $SOURCE_ID on \`$DATA_REGION\`, stack \`$STACK_NAME\`"
             echo "- \`$LOG_GROUP\` auto-subscribed; \`$STATIC_LOG_GROUP\`, \`aws/spans\` and \`/aws/cloudtrail/better-stack\` stayed unsubscribed after their recreation (T-21948, T-21949) and were subscribed through the API"
-            echo "- read back through \`$CONNECT_HOST\`: logs $LOGS + static $STATIC_LOGS, spans $SPANS, metric rows $METRICS; CloudTrail rows $CLOUDTRAIL, frozen at 0 (T-21951)"
+            echo "- read back through \`$CONNECT_HOST\`: logs $LOGS + static $STATIC_LOGS, spans $SPANS, metric rows $METRICS, CloudTrail event $CLOUDTRAIL"
             echo
             echo "✅ logs, metrics, spans and CloudTrail events round-tripped through the stack"
           } > out/summary.md

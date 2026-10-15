@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Deletes everything the E2E workflow creates: its sources in Better Stack, every e2e-gh* stack in the AWS account
 # (runs are named e2e-gh<run id>a<attempt>; e2e-bootstrap is the standing OIDC stack and must stay), the buckets the
-# stack retains by design, aws/spans (X-Ray creates it outside the stack) and the /e2e/* log groups. The workflow runs
-# this twice: before a run, so leftovers of a killed cleanup never block the next run, and after it. One run at a time
-# per account (the workflow's concurrency group), so nothing with these names belongs to a live run.
+# stack retains by design, aws/spans and /aws/application-signals/data (X-Ray Transaction Search creates them outside
+# the stack) and the /e2e/* log groups. The workflow runs this twice: before a run, so leftovers of a killed cleanup
+# never block the next run, and after it. One run at a time per account (the workflow's concurrency group), so nothing
+# with these names belongs to a live run.
 # Writes a markdown report to out/cleanup.md and exits 1 when something could not be listed or deleted.
 # Env: API, TEST_TEAM_TELEMETRY_API, SOURCE_PREFIX, AWS_REGION (+ AWS credentials for the account).
 set -euo pipefail
@@ -35,11 +36,11 @@ done
 
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text) || { could_not_list buckets; ACCOUNT_ID=""; }
 for bucket in "better-stack-firehose-$ACCOUNT_ID-$AWS_REGION" "better-stack-cloudtrail-$ACCOUNT_ID-$AWS_REGION"; do
-  [ -n "$ACCOUNT_ID" ] && aws s3api head-bucket --bucket "$bucket" 2>/dev/null || continue
+  [ -n "$ACCOUNT_ID" ] && aws s3api head-bucket --bucket "$bucket" >/dev/null 2>&1 || continue
   if aws s3 rb "s3://$bucket" --force >/dev/null; then say "- deleted bucket \`$bucket\`"; else say "- ❌ could not delete bucket \`$bucket\`"; touch cleanup.failed; fi
 done
 
-LOG_GROUPS=$(aws logs describe-log-groups --query "logGroups[?logGroupName == 'aws/spans' || starts_with(logGroupName, '/e2e/')].logGroupName" --output text) || { could_not_list "log groups"; LOG_GROUPS=""; }
+LOG_GROUPS=$(aws logs describe-log-groups --query "logGroups[?logGroupName == 'aws/spans' || logGroupName == '/aws/application-signals/data' || starts_with(logGroupName, '/e2e/')].logGroupName" --output text) || { could_not_list "log groups"; LOG_GROUPS=""; }
 for group in $LOG_GROUPS; do
   if aws logs delete-log-group --log-group-name "$group"; then say "- deleted log group \`$group\`"; else say "- ❌ could not delete log group \`$group\`"; touch cleanup.failed; fi
 done
