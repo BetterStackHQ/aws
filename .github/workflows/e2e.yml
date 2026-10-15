@@ -2,7 +2,9 @@ name: "E2E"
 
 # Deploys the CloudFormation template into a throwaway AWS account the way a customer does: creates an AWS source,
 # deploys the stack with that source's ClusterId/SourceToken/SourceId, pastes the stack outputs back into the source,
-# then produces logs, a custom metric, an X-Ray trace and a CloudTrail management event in AWS and reads all four back
+# subscribes aws/spans and the CloudTrail group through the API (see that step for why the defaults cannot be relied on
+# in a permanent sandbox account), then produces logs, a custom metric, an X-Ray trace and a CloudTrail management
+# event in AWS and reads all four back
 # through the team's SQL API connection with exact row counts. Pull requests and pushes to main deploy the template
 # from the checkout; the daily schedule deploys the published one and fails when it differs from main. Everything the
 # run creates in AWS and Better Stack is named after RUN_ID and deleted in the cleanup step, together with leftovers of
@@ -189,6 +191,25 @@ jobs:
             # IAM propagation occasionally refuses the first AssumeRole on a fresh role; one bounded retry on that answer only.
             if [ "$CODE" = 422 ] && grep -qi assume connect.json && [ "$attempt" -lt 3 ]; then echo "attempt $attempt refused: $(cat connect.json), retrying in 20 s"; sleep 20; continue; fi
             echo "::error::connecting the source failed: HTTP $CODE $(cat connect.json)"; exit 1
+          done
+
+      # A fresh customer account gets aws/spans and the CloudTrail group subscribed by default. This sandbox account is
+      # permanent in Better Stack (one record per organization and AWS account id, kept across source deletions), and
+      # every earlier run's stack deletion looked like an external unsubscribe to the sync's reconcile, which then never
+      # re-subscribes those two. They are subscribed here through the log-group-subscriptions API, which covers that
+      # surface too; the run's own log group stays on auto-subscribe.
+      - name: "[Test] Subscribe aws/spans and the CloudTrail group through the API"
+        run: |
+          DEADLINE=$((SECONDS + 180))
+          until aws logs describe-log-groups --log-group-name-prefix aws/spans --query "logGroups[?logGroupName=='aws/spans'].logGroupName" --output text | grep -q spans; do
+            [ "$SECONDS" -lt "$DEADLINE" ] || { echo "::error::X-Ray did not create aws/spans within 3 min of the warm-up trace"; exit 1; }
+            sleep 10
+          done
+          for group in aws/spans /aws/cloudtrail/better-stack; do
+            CODE=$(curl -sS -o subscription.json -w '%{http_code}' -X POST "$API/api/v2/sources/$SOURCE_ID/aws-log-group-subscriptions" -H "Authorization: Bearer $TEST_TEAM_TELEMETRY_API" -H 'Content-Type: application/json' \
+              -d "$(jq -nc --arg r "$AWS_REGION" --arg n "$group" '{region: $r, name: $n, subscribed: true}')")
+            [ "$CODE" = 201 ] || { echo "::error::subscribing $group failed: HTTP $CODE $(cat subscription.json)"; exit 1; }
+            echo "subscription requested for $group"
           done
 
       - name: "[Test] Wait until the sync subscribed the log group, aws/spans and the CloudTrail group"
