@@ -288,15 +288,18 @@ jobs:
             LOGS=$(count "remote(${COLLECTION}_logs) WHERE $SINCE AND position(raw, '$MARKER') > 0 AND position(raw, '\"log_group\":\"$LOG_GROUP\"') > 0")
             STATIC_LOGS=$(count "remote(${COLLECTION}_logs) WHERE $SINCE AND position(raw, '$MARKER') > 0 AND position(raw, '\"log_group\":\"$STATIC_LOG_GROUP\"') > 0")
             CLOUDTRAIL=$(count "remote(${COLLECTION}_logs) WHERE $SINCE AND position(raw, 'PutRetentionPolicy') > 0 AND position(raw, '$LOG_GROUP') > 0")
-            SPANS=$(count "remote(${COLLECTION}_spans) WHERE $SINCE AND JSONExtractString(raw, 'trace_id') = '$TRACE_HEX'")
+            # The mapper stores each X-Ray span as {dt, resource, span: {trace_id, span_id, name, ...}}.
+            SPANS=$(count "remote(${COLLECTION}_spans) WHERE $SINCE AND JSONExtractString(raw, 'span', 'name') IN ('e2e-parent-$RUN_ID', 'e2e-child-$RUN_ID')")
             METRICS=$(count "remote(${COLLECTION}_metrics) WHERE $SINCE AND name = 'e2e_test.aws_stack.run_marker' AND toString(tags) LIKE '%$RUN_ID%'")
             echo "logs $LOGS/20 + static $STATIC_LOGS/20, cloudtrail $CLOUDTRAIL/1, spans $SPANS/2, metric rows $METRICS"
           }
-          DEADLINE=$((SECONDS + 900))
+          # CloudTrail promises management events within 15 minutes and the trail is minutes old; everything else
+          # arrives within a few minutes.
+          DEADLINE=$((SECONDS + 1500))
           while :; do
             counts
             [ "$LOGS" -ge 20 ] && [ "$STATIC_LOGS" -ge 20 ] && [ "$CLOUDTRAIL" -ge 1 ] && [ "$SPANS" -ge 2 ] && [ "$METRICS" -ge 1 ] && break
-            [ "$SECONDS" -lt "$DEADLINE" ] || { echo "::error::not everything arrived within 15 min"; exit 1; }
+            [ "$SECONDS" -lt "$DEADLINE" ] || { echo "::error::not everything arrived within 25 min"; mkdir -p out; sql "SELECT dt, raw FROM remote(${COLLECTION}_logs) WHERE $SINCE AND position(raw, 'eventSource') > 0 ORDER BY dt DESC LIMIT 3" > out/sample_cloudtrail.json; sql "SELECT dt, raw FROM remote(${COLLECTION}_spans) WHERE $SINCE ORDER BY dt DESC LIMIT 3" > out/sample_spans.json; exit 1; }
             sleep 20
           done
           # Everything arrived; a last look 60 s later catches duplicate delivery.
@@ -306,7 +309,10 @@ jobs:
           mkdir -p out
           sql "SELECT dt, raw FROM remote(${COLLECTION}_logs) WHERE $SINCE AND position(raw, '$MARKER') > 0 ORDER BY dt LIMIT 1" > out/sample_log.json
           sql "SELECT dt, raw FROM remote(${COLLECTION}_logs) WHERE $SINCE AND position(raw, 'PutRetentionPolicy') > 0 LIMIT 1" > out/sample_cloudtrail.json
-          sql "SELECT dt, raw FROM remote(${COLLECTION}_spans) WHERE $SINCE AND JSONExtractString(raw, 'trace_id') = '$TRACE_HEX' ORDER BY JSONExtractUInt(raw, 'start_time_unix_nano')" > out/sample_spans.json
+          sql "SELECT dt, raw FROM remote(${COLLECTION}_spans) WHERE $SINCE AND JSONExtractString(raw, 'span', 'name') IN ('e2e-parent-$RUN_ID', 'e2e-child-$RUN_ID') ORDER BY JSONExtractUInt(raw, 'span', 'start_time_unix_nano')" > out/sample_spans.json
+          # The X-Ray trace id 1-<epoch>-<random> should be stored as the 32-hex id the mapper takes from Transaction Search.
+          STORED_TRACE_IDS=$(jq -r '.raw | fromjson | .span.trace_id' out/sample_spans.json | sort -u | tr '\n' ' ')
+          [ "$STORED_TRACE_IDS" = "$TRACE_HEX " ] || { echo "::error::stored span trace ids '$STORED_TRACE_IDS' differ from the X-Ray trace id $TRACE_HEX"; exit 1; }
           sql "SELECT name, tags FROM remote(${COLLECTION}_metrics) WHERE $SINCE AND name = 'e2e_test.aws_stack.run_marker' GROUP BY name, tags LIMIT 3" > out/sample_metric.json
           {
             echo "### AWS CloudFormation stack E2E \`$RUN_ID\`"
