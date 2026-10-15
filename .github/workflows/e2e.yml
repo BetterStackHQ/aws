@@ -97,7 +97,7 @@ jobs:
           echo "template from $TEMPLATE_FROM; docs article mentions every toggle ($(echo $TOGGLES)) and output ($(echo $OUTPUTS))"
 
       - name: "[Setup] AWS credentials (OIDC)"
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: ${{ env.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
@@ -106,6 +106,11 @@ jobs:
 
       - name: "[Check] Template is valid CloudFormation"
         run: aws cloudformation validate-template --template-body file://template.yaml >/dev/null
+
+      # A cancelled job gets only a short grace period, so its cleanup can be killed while the stack is still being
+      # deleted; sweeping first keeps such leftovers from failing this run.
+      - name: "[Setup] Sweep leftovers of earlier runs"
+        run: bash e2e/cleanup.sh
 
       - name: "[Setup] Create AWS source"
         run: |
@@ -265,46 +270,9 @@ jobs:
             echo "✅ logs, metrics, spans and CloudTrail events round-tripped through the stack"
           } > out/summary.md
 
-      - name: "[Cleanup] Delete this run's resources in Better Stack and AWS (and stale ones)"
+      - name: "[Cleanup] Delete this run's resources in Better Stack and AWS"
         if: ${{ always() }}
-        run: |
-          set -o pipefail
-          mkdir -p out
-          say() { echo "$1"; echo "$1" >> out/cleanup.md; }
-          could_not_list() { say "- ❌ could not list $1, so none were deleted"; touch cleanup.failed; }
-          say "### Cleanup"
-          say ""
-          STALE_BEFORE=$(date -u -d '-2 hours' +%FT%TZ)
-          # Sources first: while the integration role still exists Better Stack can unsubscribe cleanly.
-          SOURCES=$(curl -sS --fail-with-body "$API/api/v1/sources?name=$SOURCE_PREFIX&per_page=250" -H "Authorization: Bearer $TEST_TEAM_TELEMETRY_API" \
-            | jq -r --arg run " $RUN_ID" --arg before "$STALE_BEFORE" '.data[] | select((.attributes.name | endswith($run)) or .attributes.created_at < $before) | "\(.id) \(.attributes.name)"') || { could_not_list sources; SOURCES=""; }
-          while read -r id name; do
-            [ -n "$id" ] || continue
-            CODE=$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE "$API/api/v1/sources/$id" -H "Authorization: Bearer $TEST_TEAM_TELEMETRY_API")
-            [ "$CODE" = 204 ] && say "- deleted source $id \`$name\`" || { say "- ❌ could not delete source $id \`$name\` (HTTP $CODE)"; touch cleanup.failed; }
-          done <<<"$SOURCES"
-          STACKS=$(aws cloudformation describe-stacks --query "Stacks[?starts_with(StackName, 'e2e-')].[StackName,CreationTime]" --output json \
-            | jq -r --arg name "$STACK_NAME" --arg before "$STALE_BEFORE" '.[] | select(.[0] == $name or .[1] < $before) | .[0]') || { could_not_list stacks; STACKS=""; }
-          for stack in $STACKS; do
-            aws cloudformation delete-stack --stack-name "$stack"
-            if aws cloudformation wait stack-delete-complete --stack-name "$stack"; then say "- deleted stack \`$stack\`"; else
-              say "- ❌ could not delete stack \`$stack\`: $(aws cloudformation describe-stack-events --stack-name "$stack" --query "StackEvents[?ends_with(ResourceStatus, 'FAILED')].[LogicalResourceId,ResourceStatusReason]" --output text | head -5)"; touch cleanup.failed
-            fi
-          done
-          # The stack retains its buckets by design, and X-Ray creates aws/spans outside the stack.
-          ACCOUNT_ID=${ACCOUNT_ID:-$(aws sts get-caller-identity --query Account --output text || true)}
-          [ -n "$ACCOUNT_ID" ] || could_not_list buckets
-          for bucket in "better-stack-firehose-$ACCOUNT_ID-$AWS_REGION" "better-stack-cloudtrail-$ACCOUNT_ID-$AWS_REGION"; do
-            [ -n "$ACCOUNT_ID" ] && aws s3api head-bucket --bucket "$bucket" 2>/dev/null || continue
-            if aws s3 rb "s3://$bucket" --force >/dev/null; then say "- deleted bucket \`$bucket\`"; else say "- ❌ could not delete bucket \`$bucket\`"; touch cleanup.failed; fi
-          done
-          LOG_GROUPS=$(aws logs describe-log-groups --query 'logGroups[].[logGroupName,creationTime]' --output json \
-            | jq -r --arg mine "$LOG_GROUP" --argjson before "$(( $(date -u -d '-2 hours' +%s) * 1000 ))" '.[] | select(.[0] == "aws/spans" or (.[0] | startswith("/e2e/")) and (.[0] == $mine or .[1] < $before)) | .[0]') || { could_not_list "log groups"; LOG_GROUPS=""; }
-          for group in $LOG_GROUPS; do
-            if aws logs delete-log-group --log-group-name "$group"; then say "- deleted log group \`$group\`"; else say "- ❌ could not delete log group \`$group\`"; touch cleanup.failed; fi
-          done
-          [ "$(wc -l < out/cleanup.md)" -gt 2 ] || say "- nothing to delete"
-          [ ! -f cleanup.failed ] || { say ""; say "❌ cleanup left resources behind"; exit 1; }
+        run: bash e2e/cleanup.sh
 
       - name: "[Report] Job summary"
         if: ${{ always() }}
