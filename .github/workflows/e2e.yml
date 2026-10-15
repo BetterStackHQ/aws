@@ -1,0 +1,324 @@
+name: "E2E"
+
+# Deploys the CloudFormation template into a throwaway AWS account the way a customer does: creates an AWS source,
+# deploys the stack with that source's ClusterId/SourceToken/SourceId, pastes the stack outputs back into the source,
+# then produces logs, a custom metric, an X-Ray trace and a CloudTrail management event in AWS and reads all four back
+# through the team's SQL API connection with exact row counts. Pull requests and pushes to main deploy the template
+# from the checkout; the daily schedule deploys the published one and fails when it differs from main. Everything the
+# run creates in AWS and Better Stack is named after RUN_ID and deleted in the cleanup step, together with leftovers of
+# earlier runs older than two hours. The docs check fails when the docs article stops naming a template toggle or
+# output. Pull requests from forks are skipped: they get no OIDC token.
+# See the docs guide in https://betterstack.com/docs/logs/aws-cloudformation/
+#
+# AWS account: better-stack-e2e-aws-stack (251917137055), a member of the Better Stack organization that holds nothing
+# but this test. Root sign-in: 1Password, Engineering vault, item "AWS better-stack-e2e-aws-stack". The one standing
+# resource is the CloudFormation stack `e2e-bootstrap` from e2e/bootstrap.yaml: a GitHub OIDC provider and IAM role
+# `github-actions-e2e` with AdministratorAccess trusting this repository. The template deploys IAM roles, Lambdas,
+# Firehose streams, CloudTrail and S3, and its role and bucket names are fixed per account, so administrator access in
+# an otherwise empty account is the honest scope and only one run may deploy at a time (the concurrency group below).
+# Secrets: TEST_TEAM_TELEMETRY_API, TEST_TEAM_CONNECTION_USERNAME, TEST_TEAM_CONNECTION_PASSWORD (the E2E testing team),
+# LINEAR_* (see notify_linear_failure.yml).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '15 5 * * *'
+  workflow_dispatch:
+    inputs:
+      template_url:
+        description: 'Template to deploy instead of the checkout (any URL)'
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+  actions: read
+
+# The template names its IAM roles and buckets globally, so one stack per account at a time.
+concurrency:
+  group: e2e-aws-stack
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+  AWS_ROLE_ARN: arn:aws:iam::251917137055:role/github-actions-e2e
+  API: https://telemetry.betterstack.com
+  DOCS_URL: https://betterstack.com/docs/logs/aws-cloudformation/
+  PUBLISHED_TEMPLATE_URL: https://better-stack-cloudformation.s3.amazonaws.com/better-stack-full.yaml
+  TEMPLATE_URL_OVERRIDE: ${{ inputs.template_url }}
+  RUN_ID: gh${{ github.run_id }}a${{ github.run_attempt }}
+  SOURCE_PREFIX: e2e-aws-stack
+  STACK_NAME: e2e-gh${{ github.run_id }}a${{ github.run_attempt }}
+  LOG_GROUP: /e2e/gh${{ github.run_id }}a${{ github.run_attempt }}
+  MARKER: e2e run_id=gh${{ github.run_id }}a${{ github.run_attempt }}
+  TEST_TEAM_TELEMETRY_API: ${{ secrets.TEST_TEAM_TELEMETRY_API }}
+  TEST_TEAM_CONNECTION_USERNAME: ${{ secrets.TEST_TEAM_CONNECTION_USERNAME }}
+  TEST_TEAM_CONNECTION_PASSWORD: ${{ secrets.TEST_TEAM_CONNECTION_PASSWORD }}
+
+jobs:
+  test:
+    name: Stack round trip
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: "[Setup] Checkout code"
+        uses: actions/checkout@v7
+
+      - name: "[Check] Pick the template, docs article names every toggle and output, published template vs main"
+        run: |
+          if [ -n "$TEMPLATE_URL_OVERRIDE" ]; then
+            curl -sSfL "$TEMPLATE_URL_OVERRIDE" -o template.yaml; TEMPLATE_FROM="$TEMPLATE_URL_OVERRIDE"
+          elif [ "${{ github.event_name }}" = schedule ]; then
+            curl -sSfL "$PUBLISHED_TEMPLATE_URL" -o template.yaml; TEMPLATE_FROM="$PUBLISHED_TEMPLATE_URL"
+          else
+            cp cloudformation/full/better-stack-full.yaml template.yaml; TEMPLATE_FROM="this checkout"
+          fi
+          echo "TEMPLATE_FROM=$TEMPLATE_FROM ($(git rev-parse --short HEAD))" >> "$GITHUB_ENV"
+          curl -sSfL "$PUBLISHED_TEMPLATE_URL" -o template-published.yaml
+          if ! diff -q template-published.yaml cloudformation/full/better-stack-full.yaml >/dev/null; then
+            if [ "${{ github.event_name }}" = schedule ]; then
+              echo "::error::$PUBLISHED_TEMPLATE_URL differs from cloudformation/full/better-stack-full.yaml on main: the published template was not updated after a merge"
+              diff template-published.yaml cloudformation/full/better-stack-full.yaml | head -40
+              exit 1
+            fi
+            echo "::warning::$PUBLISHED_TEMPLATE_URL differs from the template in this checkout (expected while a change is unreleased)"
+          fi
+          TOGGLES=$(awk '/^Parameters:/{p=1;next} /^[A-Z][A-Za-z]*:/{p=0} p && /^  [A-Za-z]+:$/{name=substr($1,1,length($1)-1)} p && /^      - .false.$/{print name}' template.yaml | sort -u)
+          OUTPUTS=$(awk '/^Outputs:/{p=1;next} p && /^  [A-Za-z]+:$/{print substr($1,1,length($1)-1)}' template.yaml)
+          [ -n "$TOGGLES" ] && [ -n "$OUTPUTS" ] || { echo "::error::found no true/false parameters or no outputs in the template, this check needs updating"; exit 1; }
+          curl -sSfL "$DOCS_URL" -o docs.html
+          MISSING=""
+          for name in $TOGGLES $OUTPUTS https://github.com/BetterStackHQ/aws; do grep -q "$name" docs.html || MISSING="$MISSING $name"; done
+          [ -z "$MISSING" ] || { echo "::error::$DOCS_URL does not mention:$MISSING"; exit 1; }
+          echo "template from $TEMPLATE_FROM; docs article mentions every toggle ($(echo $TOGGLES)) and output ($(echo $OUTPUTS))"
+
+      - name: "[Setup] AWS credentials (OIDC)"
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          # Stack creation and deletion can take 20 min each; the role allows 2 h sessions.
+          role-duration-seconds: 7200
+
+      - name: "[Check] Template is valid CloudFormation"
+        run: aws cloudformation validate-template --template-body file://template.yaml >/dev/null
+
+      - name: "[Setup] Create AWS source"
+        run: |
+          RES=$(curl -sS -X POST "$API/api/v1/sources" -H "Authorization: Bearer $TEST_TEAM_TELEMETRY_API" -H 'Content-Type: application/json' \
+            -d "$(jq -nc --arg name "$SOURCE_PREFIX $RUN_ID" '{name: $name, platform: "aws"}')")
+          jq -e '.data.id' <<<"$RES" >/dev/null || { echo "::error::creating the source failed: $RES"; exit 1; }
+          SOURCE_TOKEN=$(jq -r '.data.attributes.token' <<<"$RES")
+          echo "::add-mask::$SOURCE_TOKEN"
+          {
+            echo "SOURCE_ID=$(jq -r '.data.id' <<<"$RES")"
+            echo "SOURCE_TOKEN=$SOURCE_TOKEN"
+            echo "DATA_REGION=$(jq -r '.data.attributes.data_region' <<<"$RES")"
+            echo "INGESTING_HOST=$(jq -r '.data.attributes.ingesting_host' <<<"$RES")"
+            echo "COLLECTION=t$(jq -r '.data.attributes.team_id' <<<"$RES")_$(jq -r '.data.attributes.table_name' <<<"$RES")"
+            echo "CONNECT_HOST=$(jq -r '.data.attributes.data_region' <<<"$RES")-connect.betterstackdata.com"
+            echo "ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)"
+          } >> "$GITHUB_ENV"
+          echo "source $(jq -r '.data.id' <<<"$RES") on $(jq -r '.data.attributes.data_region' <<<"$RES")"
+
+      # A fresh token reaches the ingesters with a delay; until then they answer 401 and Firehose would retry its
+      # batches. Send warm-up lines until 20 in a row are accepted, then let it settle.
+      - name: "[Setup] Warm up the source until ingest accepts its token"
+        run: |
+          STREAK=0
+          DEADLINE=$((SECONDS + 300))
+          while [ "$STREAK" -lt 20 ]; do
+            CODE=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "https://$INGESTING_HOST/" -H "Authorization: Bearer $SOURCE_TOKEN" -H 'Content-Type: application/json' -d "{\"message\":\"e2e warm-up run_id=$RUN_ID\"}")
+            if [ "$CODE" = 202 ]; then STREAK=$((STREAK + 1)); else echo "ingest answered HTTP $CODE after $STREAK accepted"; STREAK=0; fi
+            [ "$SECONDS" -lt "$DEADLINE" ] || { echo "::error::ingest did not accept the source token 20 times in a row within 5 min"; exit 1; }
+            sleep 1
+          done
+          sleep 15
+          echo "ingest accepts the token"
+
+      - name: "[Setup] Create the log group before the stack, so the first sync finds it"
+        run: |
+          aws logs create-log-group --log-group-name "$LOG_GROUP"
+          aws logs create-log-stream --log-group-name "$LOG_GROUP" --log-stream-name run
+
+      - name: "[Test] Deploy the CloudFormation stack"
+        run: |
+          aws cloudformation create-stack --stack-name "$STACK_NAME" --template-body file://template.yaml --capabilities CAPABILITY_NAMED_IAM \
+            --parameters "ParameterKey=ClusterId,ParameterValue=$DATA_REGION" "ParameterKey=SourceToken,ParameterValue=$SOURCE_TOKEN" "ParameterKey=SourceId,ParameterValue=$SOURCE_ID"
+          if ! aws cloudformation wait stack-create-complete --stack-name "$STACK_NAME"; then
+            echo "::error::stack creation failed: $(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --query 'Stacks[0].StackStatus' --output text)"
+            aws cloudformation describe-stack-events --stack-name "$STACK_NAME" --query "StackEvents[?ends_with(ResourceStatus, 'FAILED')].[LogicalResourceId,ResourceStatus,ResourceStatusReason]" --output table
+            exit 1
+          fi
+          OUTPUTS=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --query 'Stacks[0].Outputs' --output json)
+          ROLE_ARN=$(jq -r '.[] | select(.OutputKey == "IntegrationRoleArn") | .OutputValue' <<<"$OUTPUTS")
+          EXTERNAL_ID=$(jq -r '.[] | select(.OutputKey == "ExternalId") | .OutputValue' <<<"$OUTPUTS")
+          [ -n "$ROLE_ARN" ] && [ -n "$EXTERNAL_ID" ] || { echo "::error::stack outputs lack IntegrationRoleArn or ExternalId: $OUTPUTS"; exit 1; }
+          # The external id is half of what Better Stack needs to assume the integration role; this repo is public.
+          echo "::add-mask::$EXTERNAL_ID"
+          echo "ROLE_ARN=$ROLE_ARN" >> "$GITHUB_ENV"
+          echo "EXTERNAL_ID=$EXTERNAL_ID" >> "$GITHUB_ENV"
+          echo "stack outputs: IntegrationRoleArn $ROLE_ARN, ExternalId (masked)"
+
+      # X-Ray creates the aws/spans log group when it processes the first span, and the sync subscribes only groups
+      # that exist, so a throwaway trace goes in before the source is connected.
+      - name: "[Test] Warm-up trace so that aws/spans exists before the first sync"
+        run: |
+          NOW=$(date +%s)
+          TRACE_ID="1-$(printf '%x' "$NOW")-$(openssl rand -hex 12)"
+          SEGMENT=$(jq -nc --arg name "e2e-warm-up" --arg id "$(openssl rand -hex 8)" --arg trace "$TRACE_ID" --argjson start "$((NOW - 1))" --argjson end "$NOW" \
+            '{name: $name, id: $id, trace_id: $trace, start_time: $start, end_time: $end}')
+          aws xray put-trace-segments --trace-segment-documents "$SEGMENT" --query 'UnprocessedTraceSegments' --output json | jq -e 'length == 0' >/dev/null
+
+      # aws_account_id would select an already connected account; a new connection is the role ARN + external id only.
+      - name: "[Test] Paste the stack outputs into the source (connects the AWS account, enqueues the sync)"
+        run: |
+          BODY=$(jq -nc --arg r "$ROLE_ARN" --arg e "$EXTERNAL_ID" '{aws_role_arn: $r, aws_external_id: $e}')
+          for attempt in 1 2 3; do
+            CODE=$(curl -sS -o connect.json -w '%{http_code}' -X PATCH "$API/api/v1/sources/$SOURCE_ID" -H "Authorization: Bearer $TEST_TEAM_TELEMETRY_API" -H 'Content-Type: application/json' -d "$BODY")
+            [ "$CODE" = 200 ] && { echo "source connected to $ROLE_ARN"; exit 0; }
+            # IAM propagation occasionally refuses the first AssumeRole on a fresh role; one bounded retry on that answer only.
+            if [ "$CODE" = 422 ] && grep -qi assume connect.json && [ "$attempt" -lt 3 ]; then echo "attempt $attempt refused: $(cat connect.json), retrying in 20 s"; sleep 20; continue; fi
+            echo "::error::connecting the source failed: HTTP $CODE $(cat connect.json)"; exit 1
+          done
+
+      - name: "[Test] Wait until the sync subscribed the log group, aws/spans and the CloudTrail group"
+        run: |
+          DEADLINE=$((SECONDS + 480))
+          while :; do
+            PENDING=""
+            for group in "$LOG_GROUP" aws/spans /aws/cloudtrail/better-stack; do
+              aws logs describe-subscription-filters --log-group-name "$group" --query "subscriptionFilters[?filterName=='BetterStackLogs'].destinationArn" --output text 2>/dev/null | grep -q firehose || PENDING="$PENDING $group"
+            done
+            [ -z "$PENDING" ] && { echo "all three log groups carry the BetterStackLogs subscription filter"; exit 0; }
+            [ "$SECONDS" -lt "$DEADLINE" ] || { echo "::error::no BetterStackLogs subscription filter after 8 min on:$PENDING"; exit 1; }
+            echo "waiting for subscriptions on:$PENDING"; sleep 15
+          done
+
+      - name: "[Test] Produce logs, a custom metric, a two-segment trace and a CloudTrail management event"
+        run: |
+          echo "SINCE=dt > toDateTime('$(date -u -d '-10 minutes' '+%F %T')')" >> "$GITHUB_ENV"
+          jq -nc --arg m "$MARKER" --arg run "$RUN_ID" '[range(1; 21) as $n | {timestamp: ((now * 1000 | floor) + $n), message: ({message: $m, e2e: {run_id: $run, n: $n}} | tojson)}]' > events.json
+          aws logs put-log-events --log-group-name "$LOG_GROUP" --log-stream-name run --log-events file://events.json >/dev/null
+          jq -nc --arg run "$RUN_ID" --arg t1 "$(date -u -d '-2 minutes' +%FT%TZ)" --arg t2 "$(date -u -d '-1 minute' +%FT%TZ)" --arg t3 "$(date -u +%FT%TZ)" \
+            '[$t1, $t2, $t3] | to_entries | map({MetricName: "RunMarker", Value: (.key + 1), Unit: "Count", Timestamp: .value, Dimensions: [{Name: "RunId", Value: $run}]})' > metrics.json
+          aws cloudwatch put-metric-data --namespace E2eTest/AwsStack --metric-data file://metrics.json
+          NOW=$(date +%s)
+          TRACE_ID="1-$(printf '%x' "$NOW")-$(openssl rand -hex 12)"
+          PARENT_ID=$(openssl rand -hex 8)
+          PARENT=$(jq -nc --arg name "e2e-parent-$RUN_ID" --arg id "$PARENT_ID" --arg trace "$TRACE_ID" --arg run "$RUN_ID" --argjson start "$((NOW - 1))" --argjson end "$NOW" \
+            '{name: $name, id: $id, trace_id: $trace, start_time: $start, end_time: $end, annotations: {run_id: $run}}')
+          CHILD=$(jq -nc --arg name "e2e-child-$RUN_ID" --arg id "$(openssl rand -hex 8)" --arg parent "$PARENT_ID" --arg trace "$TRACE_ID" --arg run "$RUN_ID" --argjson start "$((NOW - 1))" --argjson end "$NOW" \
+            '{name: $name, id: $id, parent_id: $parent, trace_id: $trace, start_time: ($start + 0.2), end_time: ($end - 0.2), annotations: {run_id: $run}}')
+          aws xray put-trace-segments --trace-segment-documents "$PARENT" "$CHILD" --query 'UnprocessedTraceSegments' --output json | jq -e 'length == 0' >/dev/null
+          # The X-Ray trace id 1-<8 hex epoch>-<24 hex> is stored as the 32-hex OpenTelemetry id.
+          echo "TRACE_HEX=$(cut -d- -f2,3 <<<"$TRACE_ID" | tr -d -)" >> "$GITHUB_ENV"
+          # A management event that happens after the trail exists and names this run.
+          aws logs put-retention-policy --log-group-name "$LOG_GROUP" --retention-in-days 1
+          echo "20 log events, 3 datapoints of E2eTest/AwsStack RunMarker, trace $TRACE_ID, PutRetentionPolicy on $LOG_GROUP"
+
+      - name: "[Test] Read everything back through the SQL API connection"
+        run: |
+          set -o pipefail
+          sql() {
+            CODE=$(curl -sS -o response.json -w '%{http_code}' -u "$TEST_TEAM_CONNECTION_USERNAME:$TEST_TEAM_CONNECTION_PASSWORD" -H 'Content-Type: plain/text' --data-binary "$1 FORMAT JSONEachRow" "https://$CONNECT_HOST/")
+            # A source's logs, spans and metrics collections each exist only from their first stored row on;
+            # until then the query is "no rows yet".
+            [ "$CODE" = 500 ] && grep -q CLUSTER_DOESNT_EXIST response.json && return 0
+            [ "$CODE" = 200 ] || { echo "::error::SQL API on $CONNECT_HOST answered HTTP $CODE: $(head -c 300 response.json)" >&2; return 1; }
+            cat response.json
+          }
+          count() { ROWS=$(sql "SELECT count() AS n FROM $1") || return 1; [ -n "$ROWS" ] && jq -r '.n' <<<"$ROWS" || echo 0; }
+          counts() {
+            LOGS=$(count "remote(${COLLECTION}_logs) WHERE $SINCE AND position(raw, '$MARKER') > 0")
+            CLOUDTRAIL=$(count "remote(${COLLECTION}_logs) WHERE $SINCE AND position(raw, 'PutRetentionPolicy') > 0 AND position(raw, '$LOG_GROUP') > 0")
+            SPANS=$(count "remote(${COLLECTION}_spans) WHERE $SINCE AND JSONExtractString(raw, 'trace_id') = '$TRACE_HEX'")
+            METRICS=$(count "remote(${COLLECTION}_metrics) WHERE $SINCE AND name = 'e2e_test.aws_stack.run_marker' AND toString(tags) LIKE '%$RUN_ID%'")
+            echo "logs $LOGS/20, cloudtrail $CLOUDTRAIL/1, spans $SPANS/2, metric rows $METRICS"
+          }
+          DEADLINE=$((SECONDS + 900))
+          while :; do
+            counts
+            [ "$LOGS" -ge 20 ] && [ "$CLOUDTRAIL" -ge 1 ] && [ "$SPANS" -ge 2 ] && [ "$METRICS" -ge 1 ] && break
+            [ "$SECONDS" -lt "$DEADLINE" ] || { echo "::error::not everything arrived within 15 min"; exit 1; }
+            sleep 20
+          done
+          # Everything arrived; a last look 60 s later catches duplicate delivery.
+          sleep 60
+          counts
+          [ "$LOGS" = 20 ] && [ "$CLOUDTRAIL" = 1 ] && [ "$SPANS" = 2 ] || { echo "::error::unexpected row counts: logs $LOGS (20), cloudtrail $CLOUDTRAIL (1), spans $SPANS (2)"; exit 1; }
+          mkdir -p out
+          sql "SELECT dt, raw FROM remote(${COLLECTION}_logs) WHERE $SINCE AND position(raw, '$MARKER') > 0 ORDER BY dt LIMIT 1" > out/sample_log.json
+          sql "SELECT dt, raw FROM remote(${COLLECTION}_logs) WHERE $SINCE AND position(raw, 'PutRetentionPolicy') > 0 LIMIT 1" > out/sample_cloudtrail.json
+          sql "SELECT dt, raw FROM remote(${COLLECTION}_spans) WHERE $SINCE AND JSONExtractString(raw, 'trace_id') = '$TRACE_HEX' ORDER BY JSONExtractUInt(raw, 'start_time_unix_nano')" > out/sample_spans.json
+          sql "SELECT name, tags FROM remote(${COLLECTION}_metrics) WHERE $SINCE AND name = 'e2e_test.aws_stack.run_marker' GROUP BY name, tags LIMIT 3" > out/sample_metric.json
+          {
+            echo "### AWS CloudFormation stack E2E \`$RUN_ID\`"
+            echo
+            echo "- template from $TEMPLATE_FROM, source $SOURCE_ID on \`$DATA_REGION\`, stack \`$STACK_NAME\`"
+            echo "- read back through \`$CONNECT_HOST\`: logs $LOGS, cloudtrail $CLOUDTRAIL, spans $SPANS, metric rows $METRICS"
+            echo
+            echo "✅ logs, metrics, spans and CloudTrail events round-tripped through the stack"
+          } > out/summary.md
+
+      - name: "[Cleanup] Delete this run's resources in Better Stack and AWS (and stale ones)"
+        if: ${{ always() }}
+        run: |
+          set -o pipefail
+          mkdir -p out
+          say() { echo "$1"; echo "$1" >> out/cleanup.md; }
+          could_not_list() { say "- ❌ could not list $1, so none were deleted"; touch cleanup.failed; }
+          say "### Cleanup"
+          say ""
+          STALE_BEFORE=$(date -u -d '-2 hours' +%FT%TZ)
+          # Sources first: while the integration role still exists Better Stack can unsubscribe cleanly.
+          SOURCES=$(curl -sS --fail-with-body "$API/api/v1/sources?name=$SOURCE_PREFIX&per_page=250" -H "Authorization: Bearer $TEST_TEAM_TELEMETRY_API" \
+            | jq -r --arg run " $RUN_ID" --arg before "$STALE_BEFORE" '.data[] | select((.attributes.name | endswith($run)) or .attributes.created_at < $before) | "\(.id) \(.attributes.name)"') || { could_not_list sources; SOURCES=""; }
+          while read -r id name; do
+            [ -n "$id" ] || continue
+            CODE=$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE "$API/api/v1/sources/$id" -H "Authorization: Bearer $TEST_TEAM_TELEMETRY_API")
+            [ "$CODE" = 204 ] && say "- deleted source $id \`$name\`" || { say "- ❌ could not delete source $id \`$name\` (HTTP $CODE)"; touch cleanup.failed; }
+          done <<<"$SOURCES"
+          STACKS=$(aws cloudformation describe-stacks --query "Stacks[?starts_with(StackName, 'e2e-')].[StackName,CreationTime]" --output json \
+            | jq -r --arg name "$STACK_NAME" --arg before "$STALE_BEFORE" '.[] | select(.[0] == $name or .[1] < $before) | .[0]') || { could_not_list stacks; STACKS=""; }
+          for stack in $STACKS; do
+            aws cloudformation delete-stack --stack-name "$stack"
+            if aws cloudformation wait stack-delete-complete --stack-name "$stack"; then say "- deleted stack \`$stack\`"; else
+              say "- ❌ could not delete stack \`$stack\`: $(aws cloudformation describe-stack-events --stack-name "$stack" --query "StackEvents[?ends_with(ResourceStatus, 'FAILED')].[LogicalResourceId,ResourceStatusReason]" --output text | head -5)"; touch cleanup.failed
+            fi
+          done
+          # The stack retains its buckets by design, and X-Ray creates aws/spans outside the stack.
+          ACCOUNT_ID=${ACCOUNT_ID:-$(aws sts get-caller-identity --query Account --output text || true)}
+          [ -n "$ACCOUNT_ID" ] || could_not_list buckets
+          for bucket in "better-stack-firehose-$ACCOUNT_ID-$AWS_REGION" "better-stack-cloudtrail-$ACCOUNT_ID-$AWS_REGION"; do
+            [ -n "$ACCOUNT_ID" ] && aws s3api head-bucket --bucket "$bucket" 2>/dev/null || continue
+            if aws s3 rb "s3://$bucket" --force >/dev/null; then say "- deleted bucket \`$bucket\`"; else say "- ❌ could not delete bucket \`$bucket\`"; touch cleanup.failed; fi
+          done
+          LOG_GROUPS=$(aws logs describe-log-groups --query 'logGroups[].[logGroupName,creationTime]' --output json \
+            | jq -r --arg mine "$LOG_GROUP" --argjson before "$(( $(date -u -d '-2 hours' +%s) * 1000 ))" '.[] | select(.[0] == "aws/spans" or (.[0] | startswith("/e2e/")) and (.[0] == $mine or .[1] < $before)) | .[0]') || { could_not_list "log groups"; LOG_GROUPS=""; }
+          for group in $LOG_GROUPS; do
+            if aws logs delete-log-group --log-group-name "$group"; then say "- deleted log group \`$group\`"; else say "- ❌ could not delete log group \`$group\`"; touch cleanup.failed; fi
+          done
+          [ "$(wc -l < out/cleanup.md)" -gt 2 ] || say "- nothing to delete"
+          [ ! -f cleanup.failed ] || { say ""; say "❌ cleanup left resources behind"; exit 1; }
+
+      - name: "[Report] Job summary"
+        if: ${{ always() }}
+        run: |
+          if [ -f out/summary.md ]; then cat out/summary.md >> "$GITHUB_STEP_SUMMARY"; else echo "No summary, the run failed before verification." >> "$GITHUB_STEP_SUMMARY"; fi
+          # Rows come back as JSONEachRow with the stored event as a JSON string in raw; render them as a pretty array.
+          for f in out/sample_*.json; do [ -f "$f" ] && { echo; echo "<details><summary>$(basename "$f")</summary>"; echo; echo '```json'; jq -s 'map(if has("raw") then .raw |= (fromjson? // .) else . end)' "$f"; echo '```'; echo '</details>'; echo; } >> "$GITHUB_STEP_SUMMARY"; done
+          [ -f out/cleanup.md ] && { echo; cat out/cleanup.md; } >> "$GITHUB_STEP_SUMMARY"
+          true
+
+  notify-linear:
+    if: ${{ failure() && (github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) }}
+    needs: [test]
+    uses: ./.github/workflows/notify_linear_failure.yml
+    with:
+      assignee: petr
+    secrets: inherit

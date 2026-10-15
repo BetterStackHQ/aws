@@ -1,0 +1,42 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: One-time bootstrap of an E2E CI account. GitHub Actions of one repository assume CiRole through OIDC; everything else in the account is created and deleted per workflow run.
+Parameters:
+  GitHubRepository:
+    Type: String
+    Description: The owner/name of the GitHub repository whose workflows may assume the CI role.
+Resources:
+  GitHubOidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList: [sts.amazonaws.com]
+      ThumbprintList: [6938fd4d98bab03faadb97b34396831e3780aea1]
+  CiRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: github-actions-e2e
+      MaxSessionDuration: 7200
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Federated: !GetAtt GitHubOidcProvider.Arn }
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals: { 'token.actions.githubusercontent.com:aud': sts.amazonaws.com }
+              StringLike: { 'token.actions.githubusercontent.com:sub': !Sub 'repo:${GitHubRepository}:*' }
+      ManagedPolicyArns: [arn:aws:iam::aws:policy/AdministratorAccess]
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: e2e-lambda-exec
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns: [arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole]
+Outputs:
+  CiRoleArn: { Value: !GetAtt CiRole.Arn }
+  LambdaExecutionRoleArn: { Value: !GetAtt LambdaExecutionRole.Arn }
