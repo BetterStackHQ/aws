@@ -303,10 +303,11 @@ jobs:
           sleep 60
           counts
           [ "$LOGS" = 20 ] && [ "$STATIC_LOGS" = 20 ] && [ "$SPANS" = 2 ] || { echo "::error::unexpected row counts: logs $LOGS (20), static $STATIC_LOGS (20), spans $SPANS (2)"; exit 1; }
-          # Frozen behaviour: CloudWatch Logs does not forward what CloudTrail writes into /aws/cloudtrail/better-stack
-          # to the Firehose, although the trail delivers and the subscription filter is in place (T-21951). The trail
-          # has written dozens of events by now, so a working path shows rows here.
-          [ "$CLOUDTRAIL" = 0 ] || { echo "::error::$CLOUDTRAIL CloudTrail rows arrived: the behaviour this test freezes has changed (see T-21951), update the test"; exit 1; }
+          # Frozen behaviour: within the run's lifetime CloudWatch Logs forwards none of what CloudTrail writes into
+          # /aws/cloudtrail/better-stack to the Firehose, although the trail delivers and the subscription filter is in
+          # place (T-21951; production accounts with older stacks do receive CloudTrail rows). The trail has written
+          # dozens of events by now, so a working path shows rows here.
+          [ "$CLOUDTRAIL" = 0 ] || { echo "::error::$CLOUDTRAIL CloudTrail rows arrived within the run: the behaviour this test freezes has changed (see T-21951), update the test"; exit 1; }
           mkdir -p out
           sql "SELECT dt, raw FROM remote(${COLLECTION}_logs) WHERE $SINCE AND position(raw, '$MARKER') > 0 ORDER BY dt LIMIT 1" > out/sample_log.json
           sql "SELECT dt, raw FROM remote(${COLLECTION}_spans) WHERE $SINCE AND JSONExtractString(raw, 'span', 'name') IN ('e2e-parent-$RUN_ID', 'e2e-child-$RUN_ID') ORDER BY JSONExtractUInt(raw, 'span', 'start_time_unix_nano')" > out/sample_spans.json
