@@ -2,11 +2,6 @@ name: "Notify Linear on failure"
 
 on:
   workflow_call:
-    inputs:
-      assignee:
-        description: "Assignee: pawel or petr"
-        required: true
-        type: string
 
 jobs:
   create-linear-issue:
@@ -45,10 +40,7 @@ jobs:
           LINEAR_TEAM_ID: ${{ secrets.LINEAR_TEAM_TELEMETRY_ID }}
           LINEAR_STATUS_PLAN_ID: ${{ secrets.LINEAR_STATUS_PLAN_ID }}
           LINEAR_PROJECT_INGESTION_FOR_EVERYTHING_ID: ${{ secrets.LINEAR_PROJECT_INGESTION_FOR_EVERYTHING_ID }}
-          LINEAR_PROJECT_COLLECTORS_ID: ${{ secrets.LINEAR_PROJECT_COLLECTORS_ID }}
-          LINEAR_ASSIGNEE_PAWEL_ID: ${{ secrets.LINEAR_ASSIGNEE_PAWEL_ID }}
           LINEAR_ASSIGNEE_PETR_ID: ${{ secrets.LINEAR_ASSIGNEE_PETR_ID }}
-          ASSIGNEE: ${{ inputs.assignee }}
           WORKFLOW: ${{ github.event.workflow_run.name || github.workflow }}
           REF_NAME: ${{ github.event.workflow_run.head_branch || github.ref_name }}
           RUN_URL: ${{ github.event.workflow_run.html_url || format('{0}/{1}/actions/runs/{2}', github.server_url, github.repository, github.run_id) }}
@@ -58,14 +50,6 @@ jobs:
           COMMIT_MESSAGE: ${{ github.event.workflow_run.head_commit.message || github.event.head_commit.message }}
           FAILED_JOBS: ${{ steps.ctx.outputs.failed_jobs }}
         run: |
-          if [ "$ASSIGNEE" = "pawel" ]; then
-            ASSIGNEE_ID="$LINEAR_ASSIGNEE_PAWEL_ID"
-            PROJECT_ID="$LINEAR_PROJECT_COLLECTORS_ID"
-          else
-            ASSIGNEE_ID="$LINEAR_ASSIGNEE_PETR_ID"
-            PROJECT_ID="$LINEAR_PROJECT_INGESTION_FOR_EVERYTHING_ID"
-          fi
-          
           SHORT_SHA="${SHA:0:7}"
           
           # head_commit is only populated on push events; skip the line otherwise
@@ -97,9 +81,9 @@ jobs:
             --arg title "$TITLE" \
             --arg description "$DESCRIPTION" \
             --arg teamId "$LINEAR_TEAM_ID" \
-            --arg assigneeId "$ASSIGNEE_ID" \
+            --arg assigneeId "$LINEAR_ASSIGNEE_PETR_ID" \
             --arg stateId "$LINEAR_STATUS_PLAN_ID" \
-            --arg projectId "$PROJECT_ID" \
+            --arg projectId "$LINEAR_PROJECT_INGESTION_FOR_EVERYTHING_ID" \
             '{
               query: "mutation IssueCreate($input: IssueCreateInput!) { issueCreate(input: $input) { success issue { identifier url } } }",
               variables: {

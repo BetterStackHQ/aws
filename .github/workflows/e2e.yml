@@ -400,6 +400,4 @@ jobs:
     if: ${{ failure() && (github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) }}
     needs: [test]
     uses: ./.github/workflows/notify_linear_failure.yml
-    with:
-      assignee: petr
     secrets: inherit
