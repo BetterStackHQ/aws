@@ -1,0 +1,105 @@
+name: "Notify Linear on failure"
+
+on:
+  workflow_call:
+
+jobs:
+  create-linear-issue:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: "Gather failure context"
+        id: ctx
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_ID: ${{ github.event.workflow_run.id || github.run_id }}
+          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt || github.run_attempt }}
+        run: |
+          FAILED=$(gh api \
+            "repos/${{ github.repository }}/actions/runs/$RUN_ID/attempts/$RUN_ATTEMPT/jobs" \
+            --paginate \
+            --jq '[.jobs[]
+                    | select(.conclusion == "failure")
+                    | "- **\(.name)** — failed at _\([.steps[] | select(.conclusion == "failure") | .name] | join(", "))_"]
+                  | join("\n")')
+          
+          if [ -z "$FAILED" ]; then
+            FAILED="_(no failed jobs reported by the API yet)_"
+          fi
+          
+          {
+            echo "failed_jobs<<CTXEOF"
+            echo "$FAILED"
+            echo "CTXEOF"
+          } >> "$GITHUB_OUTPUT"
+      - name: "Create Linear issue"
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          LINEAR_TEAM_ID: ${{ secrets.LINEAR_TEAM_TELEMETRY_ID }}
+          LINEAR_STATUS_PLAN_ID: ${{ secrets.LINEAR_STATUS_PLAN_ID }}
+          LINEAR_PROJECT_INGESTION_FOR_EVERYTHING_ID: ${{ secrets.LINEAR_PROJECT_INGESTION_FOR_EVERYTHING_ID }}
+          LINEAR_ASSIGNEE_PETR_ID: ${{ secrets.LINEAR_ASSIGNEE_PETR_ID }}
+          WORKFLOW: ${{ github.event.workflow_run.name || github.workflow }}
+          REF_NAME: ${{ github.event.workflow_run.head_branch || github.ref_name }}
+          RUN_URL: ${{ github.event.workflow_run.html_url || format('{0}/{1}/actions/runs/{2}', github.server_url, github.repository, github.run_id) }}
+          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt || github.run_attempt }}
+          EVENT_NAME: ${{ github.event.workflow_run.event || github.event_name }}
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          COMMIT_MESSAGE: ${{ github.event.workflow_run.head_commit.message || github.event.head_commit.message }}
+          FAILED_JOBS: ${{ steps.ctx.outputs.failed_jobs }}
+        run: |
+          SHORT_SHA="${SHA:0:7}"
+          
+          # head_commit is only populated on push events; skip the line otherwise
+          COMMIT_LINE="**Commit:** \`$SHORT_SHA\`"
+          if [ -n "$COMMIT_MESSAGE" ]; then
+            COMMIT_SUBJECT="$(printf '%s' "$COMMIT_MESSAGE" | head -n1)"
+            COMMIT_LINE="**Commit:** \`$SHORT_SHA\` — $COMMIT_SUBJECT"
+          fi
+          
+          ATTEMPT_NOTE=""
+          if [ "$RUN_ATTEMPT" != "1" ]; then
+            ATTEMPT_NOTE=" (attempt #$RUN_ATTEMPT)"
+          fi
+          
+          TITLE="E2E failure: $WORKFLOW"
+          DESCRIPTION=$(cat <<EOF
+          **$WORKFLOW** failed on \`$REF_NAME\` via \`$EVENT_NAME\`$ATTEMPT_NOTE
+          
+          **Failing jobs:**
+          $FAILED_JOBS
+          
+          $COMMIT_LINE
+          
+          [View failing run]($RUN_URL)
+          EOF
+          )
+          
+          PAYLOAD=$(jq -n \
+            --arg title "$TITLE" \
+            --arg description "$DESCRIPTION" \
+            --arg teamId "$LINEAR_TEAM_ID" \
+            --arg assigneeId "$LINEAR_ASSIGNEE_PETR_ID" \
+            --arg stateId "$LINEAR_STATUS_PLAN_ID" \
+            --arg projectId "$LINEAR_PROJECT_INGESTION_FOR_EVERYTHING_ID" \
+            '{
+              query: "mutation IssueCreate($input: IssueCreateInput!) { issueCreate(input: $input) { success issue { identifier url } } }",
+              variables: {
+                input: {
+                  title: $title,
+                  description: $description,
+                  teamId: $teamId,
+                  assigneeId: $assigneeId,
+                  stateId: $stateId,
+                  projectId: $projectId,
+                  priority: 2
+                }
+              }
+            }')
+          
+          curl -sSf -X POST https://api.linear.app/graphql \
+            -H "Authorization: $LINEAR_API_KEY" \
+            -H 'Content-Type: application/json' \
+            -d "$PAYLOAD"
