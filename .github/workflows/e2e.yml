@@ -272,9 +272,12 @@ jobs:
             jq -nc --arg m "$MARKER" --arg run "$RUN_ID" --arg g "$group" '[range(1; 21) as $n | {timestamp: ((now * 1000 | floor) + $n), message: ({message: $m, e2e: {run_id: $run, log_group: $g, n: $n}} | tojson)}]' > events.json
             aws logs put-log-events --log-group-name "$group" --log-stream-name run --log-events file://events.json >/dev/null
           done
-          jq -nc --arg run "$RUN_ID" --arg t1 "$(date -u -d '-2 minutes' +%FT%TZ)" --arg t2 "$(date -u -d '-1 minute' +%FT%TZ)" --arg t3 "$(date -u +%FT%TZ)" \
-            '[$t1, $t2, $t3] | to_entries | map({MetricName: "RunMarker", Value: (.key + 1), Unit: "Count", Timestamp: .value, Dimensions: [{Name: "RunId", Value: $run}]})' > metrics.json
+          # Values 1, 2 and 3 in three consecutive minutes; the read-back checks each minute's value.
+          T=$(date +%s)
+          jq -nc --arg run "$RUN_ID" --argjson t "$T" \
+            '[range(3) | {MetricName: "RunMarker", Value: (. + 1), Unit: "Count", Timestamp: ($t - (2 - .) * 60 | todate), Dimensions: [{Name: "RunId", Value: $run}]}]' > metrics.json
           aws cloudwatch put-metric-data --namespace E2eTest/AwsStack --metric-data file://metrics.json
+          echo "METRIC_MINUTES=$(((T - 120) / 60 * 60)) $(((T - 60) / 60 * 60)) $((T / 60 * 60))" >> "$GITHUB_ENV"
           NOW=$(date +%s)
           TRACE_ID="1-$(printf '%x' "$NOW")-$(openssl rand -hex 12)"
           PARENT_ID=$(openssl rand -hex 8)
@@ -301,6 +304,8 @@ jobs:
             cat response.json
           }
           count() { ROWS=$(sql "SELECT count() AS n FROM $1") || return 1; [ -n "$ROWS" ] && jq -r '.n' <<<"$ROWS" || echo 0; }
+          METRIC=e2e_test.aws_stack.run_marker
+          METRIC_FILTER="tags['run_id'] = '$RUN_ID' AND startsWith(name, '$METRIC')"
           counts() {
             LOGS=$(count "remote(${COLLECTION}_logs) WHERE $SINCE AND position(raw, '$MARKER') > 0 AND position(raw, '\"log_group\":\"$LOG_GROUP\"') > 0")
             STATIC_LOGS=$(count "remote(${COLLECTION}_logs) WHERE $SINCE AND position(raw, '$MARKER') > 0 AND position(raw, '\"log_group\":\"$STATIC_LOG_GROUP\"') > 0")
@@ -309,8 +314,10 @@ jobs:
             CLOUDTRAIL=$(count "remote(${COLLECTION}_logs) WHERE $SINCE AND JSONExtractString(raw, 'context', 'logGroup') = '/aws/cloudtrail/better-stack' AND JSONExtractString(raw, 'message', 'eventName') = 'PutRetentionPolicy' AND JSONExtractString(raw, 'message', 'requestParameters', 'logGroupName') = '$LOG_GROUP'")
             # The mapper stores each X-Ray span as {dt, resource, span: {trace_id, span_id, name, ...}}.
             SPANS=$(count "remote(${COLLECTION}_spans) WHERE $SINCE AND JSONExtractString(raw, 'span', 'name') IN ('e2e-parent-$RUN_ID', 'e2e-child-$RUN_ID')")
-            METRICS=$(count "remote(${COLLECTION}_metrics) WHERE $SINCE AND name = 'e2e_test.aws_stack.run_marker' AND toString(tags) LIKE '%$RUN_ID%'")
-            echo "logs $LOGS/20 + static $STATIC_LOGS/20, spans $SPANS/2, metric rows $METRICS, CloudTrail event $CLOUDTRAIL/1"
+            # The metric stream sends one aggregate per minute; the mapper stores it as the metric plus _max, _min, _sum and
+            # _count, so three minutes make 15 points.
+            METRICS=$(count "(SELECT name, dt FROM remote(${COLLECTION}_metrics) WHERE $SINCE AND $METRIC_FILTER GROUP BY name, dt)")
+            echo "logs $LOGS/20 + static $STATIC_LOGS/20, spans $SPANS/2, metric points $METRICS/15, CloudTrail event $CLOUDTRAIL/1"
           }
           # What CloudWatch Logs did with each group in the last 40 min; DeliveryErrors mean the filter paused for 10 min
           # and skipped what arrived meanwhile.
@@ -328,9 +335,9 @@ jobs:
           # at all, so only the run's own log group and the metric are waited for (see the step measuring that hour).
           # Otherwise everything is: CloudTrail hands events to CloudWatch Logs within about 5 min of the call.
           if [ -n "${RECENT_STACK_MIN:-}" ]; then
-            arrived() { [ "$LOGS" -ge 20 ] && [ "$METRICS" -ge 1 ]; }
+            arrived() { [ "$LOGS" -ge 20 ] && [ "$METRICS" -ge 15 ]; }
           else
-            arrived() { [ "$LOGS" -ge 20 ] && [ "$STATIC_LOGS" -ge 20 ] && [ "$SPANS" -ge 2 ] && [ "$METRICS" -ge 1 ] && [ "$CLOUDTRAIL" -ge 1 ]; }
+            arrived() { [ "$LOGS" -ge 20 ] && [ "$STATIC_LOGS" -ge 20 ] && [ "$SPANS" -ge 2 ] && [ "$METRICS" -ge 15 ] && [ "$CLOUDTRAIL" -ge 1 ]; }
           fi
           DEADLINE=$((SECONDS + 1200))
           while :; do
@@ -351,6 +358,15 @@ jobs:
             echo "::error::unexpected row counts: logs $LOGS (20), static $STATIC_LOGS (20), spans $SPANS (2), CloudTrail event $CLOUDTRAIL (1)"
             exit 1
           done
+          # Each minute must hold exactly the value sent in it: 1, 2 and 3 for the metric, _max, _min and _sum, 1 for _count.
+          # The lowest and highest stored value per point catch a re-sent minute with a different value. Points are
+          # compared by minute, since AWS does not document whether the stream stamps a minute's start.
+          EXPECTED=$(jq -nc --arg n "$METRIC" --arg m "$METRIC_MINUTES" '[$m | split(" ") | to_entries[] | (.value | tonumber) as $t | (.key + 1) as $v
+            | ({name: $n, v: $v}, {name: "\($n)_max", v: $v}, {name: "\($n)_min", v: $v}, {name: "\($n)_sum", v: $v}, {name: "\($n)_count", v: 1})
+            | {name, minute: $t, min: .v, max: .v}] | sort_by(.name, .minute)')
+          ACTUAL=$(sql "SELECT name, toUnixTimestamp(dt) AS t, minMerge(value_min) AS min, maxMerge(value_max) AS max FROM remote(${COLLECTION}_metrics) WHERE $SINCE AND $METRIC_FILTER GROUP BY name, dt" \
+            | jq -sc 'map({name, minute: (((.t | tonumber) / 60 | floor) * 60), min: (.min | tonumber), max: (.max | tonumber)}) | sort_by(.name, .minute)')
+          [ "$ACTUAL" = "$EXPECTED" ] || { echo "::error::metric points differ from the datapoints sent: expected $EXPECTED, got $ACTUAL"; exit 1; }
           if [ "${#MISSING[@]}" -gt 0 ]; then
             NAMES=$(printf '%s\n' "${MISSING[@]}" | sed -e "s#^static\$#the logs of $STATIC_LOG_GROUP#" -e 's#^spans$#the spans#' -e 's#^cloudtrail$#the CloudTrail event#' | paste -sd, - | sed 's/,/, /g')
             WARNING="Not verified: $NAMES. The previous run deleted its stack $RECENT_STACK_MIN min before this one, and for up to an hour AWS keeps using sessions of the IAM roles every run recreates under the same names, so CloudWatch Logs and CloudTrail can skip this data. A run more than an hour after the previous one checks it."
@@ -365,14 +381,14 @@ jobs:
             STORED_TRACE_IDS=$(jq -r '.raw | fromjson | .span.trace_id' out/sample_spans.json | sort -u | tr '\n' ' ')
             [ "$STORED_TRACE_IDS" = "$TRACE_HEX " ] || { echo "::error::stored span trace ids '$STORED_TRACE_IDS' differ from the X-Ray trace id $TRACE_HEX"; exit 1; }
           fi
-          sql "SELECT name, tags FROM remote(${COLLECTION}_metrics) WHERE $SINCE AND name = 'e2e_test.aws_stack.run_marker' GROUP BY name, tags LIMIT 3" > out/sample_metric.json
+          sql "SELECT name, dt, tags, avgMerge(value_avg) AS value FROM remote(${COLLECTION}_metrics) WHERE $SINCE AND tags['run_id'] = '$RUN_ID' AND name = '$METRIC' GROUP BY name, dt, tags ORDER BY dt" > out/sample_metric.json
           [ "$CLOUDTRAIL" = 0 ] || sql "SELECT dt, raw FROM remote(${COLLECTION}_logs) WHERE $SINCE AND JSONExtractString(raw, 'message', 'eventName') = 'PutRetentionPolicy' AND JSONExtractString(raw, 'message', 'requestParameters', 'logGroupName') = '$LOG_GROUP'" > out/sample_cloudtrail.json
           {
             echo "### AWS CloudFormation stack E2E \`$RUN_ID\`"
             echo
             echo "- template from $TEMPLATE_FROM, source $SOURCE_ID on \`$DATA_REGION\`, stack \`$STACK_NAME\`"
             echo "- \`$LOG_GROUP\` auto-subscribed; \`$STATIC_LOG_GROUP\`, \`aws/spans\` and \`/aws/cloudtrail/better-stack\` stayed unsubscribed after their recreation (T-21948, T-21949) and were subscribed through the API"
-            echo "- read back through \`$CONNECT_HOST\`: logs $LOGS + static $STATIC_LOGS, spans $SPANS, metric rows $METRICS, CloudTrail event $CLOUDTRAIL"
+            echo "- read back through \`$CONNECT_HOST\`: logs $LOGS + static $STATIC_LOGS, spans $SPANS, metric points $METRICS with the values sent, CloudTrail event $CLOUDTRAIL"
             echo
             if [ "${#MISSING[@]}" -gt 0 ]; then
               echo "⚠️ $WARNING"
