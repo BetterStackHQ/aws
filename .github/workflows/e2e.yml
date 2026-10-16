@@ -15,10 +15,10 @@ name: "E2E"
 #
 # AWS account: better-stack-e2e-aws-stack (251917137055), a member of the Better Stack organization that holds nothing
 # but this test. Root sign-in: 1Password, Engineering vault, item "AWS better-stack-e2e-aws-stack". The one standing
-# resource is the CloudFormation stack `e2e-bootstrap` from e2e/bootstrap.yaml: a GitHub OIDC provider and IAM role
-# `github-actions-e2e` with AdministratorAccess trusting this repository. The template deploys IAM roles, Lambdas,
-# Firehose streams, CloudTrail and S3, and its role and bucket names are fixed per account, so administrator access in
-# an otherwise empty account is the honest scope and only one run may deploy at a time (the concurrency group below).
+# resource is the CloudFormation stack `e2e-bootstrap`: a GitHub OIDC provider and IAM role `github-actions-e2e` with
+# AdministratorAccess trusting this repository. The template deploys IAM roles, Lambdas, Firehose streams, CloudTrail
+# and S3, and its role and bucket names are fixed per account, so administrator access in an otherwise empty account is
+# the honest scope and only one run may deploy at a time (the concurrency group below).
 # Secrets: TEST_TEAM_TELEMETRY_API, TEST_TEAM_CONNECTION_USERNAME, TEST_TEAM_CONNECTION_PASSWORD (the E2E testing team),
 # LINEAR_* (see notify_linear_failure.yml).
 
