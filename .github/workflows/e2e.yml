@@ -2,11 +2,10 @@ name: "E2E"
 
 # Deploys the CloudFormation template into a throwaway AWS account the way a customer does: creates an AWS source,
 # deploys the stack with that source's ClusterId/SourceToken/SourceId, pastes the stack outputs back into the source,
-# checks that the sync auto-subscribes a new log group and leaves recreated ones alone (frozen behaviour, see the step
-# naming T-21948 and T-21949), subscribes those through the API, then produces logs, a custom metric, an X-Ray trace and
-# a CloudTrail management event in AWS and reads all of them back through the team's SQL API connection with exact row
-# counts. Pull requests and pushes to main deploy the template from the checkout; the daily schedule deploys the
-# published one and fails when it differs from main. Everything the run creates in AWS and Better Stack is named after
+# checks that the first sync subscribes the run's log group, the static group, aws/spans and the CloudTrail group by
+# itself, then produces logs, a custom metric, an X-Ray trace and a CloudTrail management event in AWS and reads all of
+# them back through the team's SQL API connection with exact row counts. Pull requests and pushes to main deploy the
+# template from the checkout; the daily schedule deploys the published one and fails when it differs from main. Everything the run creates in AWS and Better Stack is named after
 # RUN_ID and deleted in the cleanup step, together with leftovers of earlier runs. Within an hour of the previous run's
 # stack deletion, the static group, aws/spans and CloudTrail delivering nothing is a warning instead of a failure (see
 # the step that measures it). The docs check fails when the docs article stops naming a template toggle or output.
@@ -204,6 +203,12 @@ jobs:
           SEGMENT=$(jq -nc --arg name "e2e-warm-up" --arg id "$(openssl rand -hex 8)" --arg trace "$TRACE_ID" --argjson start "$((NOW - 1))" --argjson end "$NOW" \
             '{name: $name, id: $id, trace_id: $trace, start_time: $start, end_time: $end}')
           aws xray put-trace-segments --trace-segment-documents "$SEGMENT" --query 'UnprocessedTraceSegments' --output json | jq -e 'length == 0' >/dev/null
+          DEADLINE=$((SECONDS + 180))
+          until aws logs describe-log-groups --log-group-name-prefix aws/spans --query "logGroups[?logGroupName=='aws/spans'].logGroupName" --output text | grep -q spans; do
+            [ "$SECONDS" -lt "$DEADLINE" ] || { echo "::error::X-Ray did not create aws/spans within 3 min of the warm-up trace"; exit 1; }
+            sleep 10
+          done
+          echo "aws/spans exists, the sync the connect enqueues will find it"
 
       # aws_account_id would select an already connected account; a new connection is the role ARN + external id only.
       - name: "[Test] Paste the stack outputs into the source (connects the AWS account, enqueues the sync)"
@@ -217,52 +222,20 @@ jobs:
             echo "::error::connecting the source failed: HTTP $CODE $(cat connect.json)"; exit 1
           done
 
-      - name: "[Test] The sync subscribes the new log group by itself"
-        run: |
-          DEADLINE=$((SECONDS + 480))
-          until aws logs describe-subscription-filters --log-group-name "$LOG_GROUP" --query "subscriptionFilters[?filterName=='BetterStackLogs'].destinationArn" --output text | grep -q firehose; do
-            [ "$SECONDS" -lt "$DEADLINE" ] || { echo "::error::the sync did not subscribe $LOG_GROUP within 8 min"; exit 1; }
-            echo "waiting for the sync to subscribe $LOG_GROUP"; sleep 15
-          done
-          echo "$LOG_GROUP carries the BetterStackLogs subscription filter"
-
-      # Frozen behaviour. A fresh account would get aws/spans and the CloudTrail group subscribed by default and the
-      # static group by auto-subscribe. This sandbox account is permanent in Better Stack (T-21948), and all three
-      # groups are deleted and recreated by every run, which the sync's reconcile treats as an explicit unsubscribe
-      # (T-21949). So the sync that just subscribed the new group must have left these three alone. When either
-      # issue is fixed this step fails and the test moves on to the new behaviour.
-      - name: "[Test] The recreated static group, aws/spans and the CloudTrail group stay unsubscribed (see T-21948, T-21949), then get subscribed through the API"
-        run: |
-          DEADLINE=$((SECONDS + 180))
-          until aws logs describe-log-groups --log-group-name-prefix aws/spans --query "logGroups[?logGroupName=='aws/spans'].logGroupName" --output text | grep -q spans; do
-            [ "$SECONDS" -lt "$DEADLINE" ] || { echo "::error::X-Ray did not create aws/spans within 3 min of the warm-up trace"; exit 1; }
-            sleep 10
-          done
-          for group in "$STATIC_LOG_GROUP" aws/spans /aws/cloudtrail/better-stack; do
-            if aws logs describe-subscription-filters --log-group-name "$group" --query "subscriptionFilters[?filterName=='BetterStackLogs'].destinationArn" --output text | grep -q firehose; then
-              echo "::error::$group was subscribed by the sync although it was deleted and recreated: the behaviour this test freezes has changed (see T-21948, T-21949), update the test"
-              exit 1
-            fi
-            echo "$group stays unsubscribed, as expected"
-          done
-          for group in "$STATIC_LOG_GROUP" aws/spans /aws/cloudtrail/better-stack; do
-            CODE=$(curl -sS -o subscription.json -w '%{http_code}' -X POST "$API/api/v2/sources/$SOURCE_ID/aws-log-group-subscriptions" -H "Authorization: Bearer $TEST_TEAM_TELEMETRY_API" -H 'Content-Type: application/json' \
-              -d "$(jq -nc --arg r "$AWS_REGION" --arg n "$group" '{region: $r, name: $n, subscribed: true}')")
-            [ "$CODE" = 201 ] || { echo "::error::subscribing $group failed: HTTP $CODE $(cat subscription.json)"; exit 1; }
-            echo "subscription requested for $group"
-          done
-
-      - name: "[Test] Wait until the sync applied the three subscriptions"
+      # Whether the sandbox's AwsAccount record was removed since the previous run (8 hours without a source) or is reused
+      # with its history, the sync the connect enqueues subscribes all four: the run's and the static group through
+      # auto-subscribe or a kept intent, aws/spans and the CloudTrail group by default.
+      - name: "[Test] The sync subscribes the run's log group, the static group, aws/spans and the CloudTrail group by itself"
         run: |
           DEADLINE=$((SECONDS + 480))
           while :; do
             PENDING=""
-            for group in "$STATIC_LOG_GROUP" aws/spans /aws/cloudtrail/better-stack; do
+            for group in "$LOG_GROUP" "$STATIC_LOG_GROUP" aws/spans /aws/cloudtrail/better-stack; do
               aws logs describe-subscription-filters --log-group-name "$group" --query "subscriptionFilters[?filterName=='BetterStackLogs'].destinationArn" --output text 2>/dev/null | grep -q firehose || PENDING="$PENDING $group"
             done
-            [ -z "$PENDING" ] && { echo "all three log groups carry the BetterStackLogs subscription filter"; exit 0; }
-            [ "$SECONDS" -lt "$DEADLINE" ] || { echo "::error::no BetterStackLogs subscription filter after 8 min on:$PENDING"; exit 1; }
-            echo "waiting for subscriptions on:$PENDING"; sleep 15
+            [ -z "$PENDING" ] && { echo "all four log groups carry the BetterStackLogs subscription filter"; exit 0; }
+            [ "$SECONDS" -lt "$DEADLINE" ] || { echo "::error::the sync did not subscribe within 8 min:$PENDING"; exit 1; }
+            echo "waiting for the sync to subscribe:$PENDING"; sleep 15
           done
 
       - name: "[Test] Produce logs, a custom metric, a two-segment trace and a CloudTrail management event"
@@ -387,7 +360,7 @@ jobs:
             echo "### AWS CloudFormation stack E2E \`$RUN_ID\`"
             echo
             echo "- template from $TEMPLATE_FROM, source $SOURCE_ID on \`$DATA_REGION\`, stack \`$STACK_NAME\`"
-            echo "- \`$LOG_GROUP\` auto-subscribed; \`$STATIC_LOG_GROUP\`, \`aws/spans\` and \`/aws/cloudtrail/better-stack\` stayed unsubscribed after their recreation (T-21948, T-21949) and were subscribed through the API"
+            echo "- \`$LOG_GROUP\` and \`$STATIC_LOG_GROUP\` auto-subscribed, \`aws/spans\` and \`/aws/cloudtrail/better-stack\` subscribed by default, all by the first sync"
             echo "- read back through \`$CONNECT_HOST\`: logs $LOGS + static $STATIC_LOGS, spans $SPANS, metric points $METRICS with the values sent, CloudTrail event $CLOUDTRAIL"
             echo
             if [ "${#MISSING[@]}" -gt 0 ]; then
