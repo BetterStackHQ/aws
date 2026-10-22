@@ -281,13 +281,13 @@ jobs:
               echo "❌ ${FAILURE:-The read-back stopped on an error, see the log of this step}"
               if [ -n "${LOGS:-}" ]; then
                 echo
-                echo "| read back through \`$CONNECT_HOST\` | arrived | expected |"
-                echo "|---|---|---|"
-                echo "| logs of \`$LOG_GROUP\` | $LOGS | 20 |"
-                echo "| logs of \`$STATIC_LOG_GROUP\` | $STATIC_LOGS | 20 |"
-                echo "| spans | $SPANS | 2 |"
-                echo "| metric points | $METRICS | 15 |"
-                echo "| CloudTrail event | $CLOUDTRAIL | 1 |"
+                echo "Read back through \`$CONNECT_HOST\`:"
+                echo
+                echo "- logs of \`$LOG_GROUP\`: $LOGS of 20"
+                echo "- logs of \`$STATIC_LOG_GROUP\`: $STATIC_LOGS of 20"
+                echo "- spans: $SPANS of 2"
+                echo "- metric points: $METRICS of 15"
+                echo "- CloudTrail event: $CLOUDTRAIL of 1"
               fi
               [ ! -f out/forwarding.md ] || { echo; cat out/forwarding.md; }
             } > out/summary.md
@@ -321,21 +321,18 @@ jobs:
           # What CloudWatch Logs did with each group in the last 40 min; DeliveryErrors mean the filter paused for 10 min
           # and skipped what arrived meanwhile.
           forwarding() {
-            {
-              echo "| CloudWatch Logs, last 40 min | incoming | forwarded | delivery errors |"
-              echo "|---|---|---|---|"
-            } > out/forwarding.md
+            printf 'CloudWatch Logs in the last 40 min:\n\n' > out/forwarding.md
             for group in "$LOG_GROUP" "$STATIC_LOG_GROUP" aws/spans /aws/cloudtrail/better-stack; do
-              ROW="| \`$group\` |"
+              VALUES=()
               for metric in IncomingLogEvents ForwardedLogEvents DeliveryErrors; do
                 DIMS="Name=LogGroupName,Value=$group"
                 [ "$metric" = IncomingLogEvents ] || DIMS="$DIMS Name=DestinationType,Value=Firehose Name=FilterName,Value=BetterStackLogs"
                 VALUE=$(aws cloudwatch get-metric-statistics --namespace AWS/Logs --metric-name "$metric" --dimensions $DIMS \
                   --start-time "$(date -u -d '-40 minutes' +%FT%TZ)" --end-time "$(date -u +%FT%TZ)" --period 2400 --statistics Sum --query 'sum(Datapoints[].Sum)' --output text)
                 echo "$group $metric $VALUE"
-                ROW="$ROW ${VALUE%.0} |"
+                VALUES+=("${VALUE%.0}")
               done
-              echo "$ROW" >> out/forwarding.md
+              echo "- \`$group\`: ${VALUES[0]} incoming, ${VALUES[1]} forwarded, ${VALUES[2]} delivery errors" >> out/forwarding.md
             done
           }
           # Within an hour of the previous stack deletion the static group, aws/spans and CloudTrail may deliver nothing
@@ -415,18 +412,19 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          mkdir -p report
           if [ -f out/summary.md ]; then
-            cp out/summary.md report/summary.md
+            cat out/summary.md >> "$GITHUB_STEP_SUMMARY"
+            # The Linear issue names the job and links the run, so it gets the summary without its heading, and the
+            # cleanup only when that left something behind. Without a summary it gets the job's errors instead.
+            mkdir -p report
+            tail -n +3 out/summary.md > report/summary.md
+            grep -q '❌' out/cleanup.md 2>/dev/null && { echo; cat out/cleanup.md; } >> report/summary.md
           else
             # The read-back writes the summary however it ends, so a step before it failed (or the job was cancelled).
             FAILED_STEP=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs" \
               --jq ".jobs[] | select(.runner_name == \"$RUNNER_NAME\") | .steps[] | select(.conclusion == \"failure\") | .name" | head -1) || true
-            { echo "### AWS CloudFormation stack E2E \`$RUN_ID\`"; echo; echo "❌ Stopped${FAILED_STEP:+ at **$FAILED_STEP**}, before anything was read back."; } > report/summary.md
+            { echo "### AWS CloudFormation stack E2E \`$RUN_ID\`"; echo; echo "❌ Stopped${FAILED_STEP:+ at **$FAILED_STEP**}, before anything was read back."; } >> "$GITHUB_STEP_SUMMARY"
           fi
-          cat report/summary.md >> "$GITHUB_STEP_SUMMARY"
-          # The Linear issue gets the cleanup only when it left something behind.
-          grep -q '❌' out/cleanup.md 2>/dev/null && { echo; cat out/cleanup.md; } >> report/summary.md
           # Rows come back as JSONEachRow with the stored event as a JSON string in raw; render them as a pretty array.
           for f in out/sample_*.json; do [ -f "$f" ] && { echo; echo "<details><summary>$(basename "$f")</summary>"; echo; echo '```json'; jq -s 'map(if has("raw") then .raw |= (fromjson? // .) else . end)' "$f"; echo '```'; echo '</details>'; echo; } >> "$GITHUB_STEP_SUMMARY"; done
           [ -f out/cleanup.md ] && { echo; cat out/cleanup.md; } >> "$GITHUB_STEP_SUMMARY"
@@ -438,6 +436,7 @@ jobs:
         with:
           name: e2e-summary-Stack round trip
           path: report/summary.md
+          if-no-files-found: ignore
           retention-days: 7
           overwrite: true
 

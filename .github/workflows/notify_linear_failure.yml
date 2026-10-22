@@ -10,8 +10,8 @@ on:
         default: ""
       job_summaries:
         description: >-
-          Adds each failed job's errors and summary to the issue. A job hands its summary over as an artifact named
-          "e2e-summary-<job name>" holding summary.md.
+          Adds each failed job's summary to the issue, or its errors when it has none. A job hands its summary over as
+          an artifact named "e2e-summary-<job name>" holding summary.md.
         type: boolean
         default: false
 
@@ -49,14 +49,18 @@ jobs:
               FAILED="$FAILED- **$NAME** — failed at _${STEPS}_"$'\n'
               continue
             fi
-            # The job's ::error:: lines, without the runner's closing "Process completed with exit code 1."
-            ERRORS=$(gh api "repos/${{ github.repository }}/check-runs/$(jq -r .id <<<"$job")/annotations" \
-              --jq '.[] | select(.annotation_level == "failure" and (.message | startswith("Process completed with exit code") | not)) | "- \(.message | gsub("\n"; " "))"') || ERRORS=""
-            FAILED="$FAILED### $NAME"$'\n\n'"Failed at **${STEPS}**"$'\n\n'"${ERRORS:+$ERRORS$'\n\n'}"
-            # A job that failed before writing its summary has no artifact and gets the errors alone.
+            FAILED="$FAILED### $NAME"$'\n\n'"Failed at **${STEPS}**"$'\n\n'
+            # A job's summary already says why it failed; a job without one (it stopped before writing it) gets its
+            # ::error:: lines instead, without the runner's closing "Process completed with exit code 1."
             SUMMARY_DIR="summaries/$(jq -r .id <<<"$job")"
             gh run download "$RUN_ID" -R "${{ github.repository }}" -n "e2e-summary-$NAME" -D "$SUMMARY_DIR" >/dev/null 2>&1 || true
-            [ ! -f "$SUMMARY_DIR/summary.md" ] || FAILED="$FAILED$(cat "$SUMMARY_DIR/summary.md")"$'\n\n'
+            if [ -f "$SUMMARY_DIR/summary.md" ]; then
+              FAILED="$FAILED$(cat "$SUMMARY_DIR/summary.md")"$'\n\n'
+            else
+              ERRORS=$(gh api "repos/${{ github.repository }}/check-runs/$(jq -r .id <<<"$job")/annotations" \
+                --jq '[.[] | select(.annotation_level == "failure" and (.message | startswith("Process completed with exit code") | not)) | .message | gsub("\n"; " ")] | unique | .[] | "- \(.)"') || ERRORS=""
+              FAILED="$FAILED${ERRORS:+$ERRORS$'\n\n'}"
+            fi
           done <<<"$JOBS"
 
           while [[ "$FAILED" == *$'\n' ]]; do FAILED="${FAILED%$'\n'}"; done
