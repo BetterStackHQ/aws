@@ -1,7 +1,19 @@
 name: "Notify Linear on failure"
 
+# A caller that sets neither input gets the plain issue: "E2E failure: <workflow name>" listing the failed jobs and steps.
 on:
   workflow_call:
+    inputs:
+      test_name:
+        description: "Names the test in the issue title instead of the workflow name"
+        type: string
+        default: ""
+      job_summaries:
+        description: >-
+          Adds each failed job's errors and summary to the issue. A job hands its summary over as an artifact named
+          "e2e-summary-<job name>" holding summary.md. The calling job needs checks: read for the errors.
+        type: boolean
+        default: false
 
 jobs:
   create-linear-issue:
@@ -9,26 +21,56 @@ jobs:
     permissions:
       contents: read
       actions: read
+      checks: read
     steps:
+      - name: "Download the jobs' summaries"
+        if: ${{ inputs.job_summaries }}
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          pattern: e2e-summary-*
+          path: summaries
+          run-id: ${{ github.event.workflow_run.id || github.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: "Gather failure context"
         id: ctx
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUN_ID: ${{ github.event.workflow_run.id || github.run_id }}
           RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt || github.run_attempt }}
+          JOB_SUMMARIES: ${{ inputs.job_summaries }}
         run: |
-          FAILED=$(gh api \
+          JOBS=$(gh api \
             "repos/${{ github.repository }}/actions/runs/$RUN_ID/attempts/$RUN_ATTEMPT/jobs" \
             --paginate \
-            --jq '[.jobs[]
+            --jq '.jobs[]
                     | select(.conclusion == "failure")
-                    | "- **\(.name)** — failed at _\([.steps[] | select(.conclusion == "failure") | .name] | join(", "))_"]
-                  | join("\n")')
-          
+                    | {id, name, steps: ([.steps[] | select(.conclusion == "failure") | .name] | join(", "))}
+                    | @json')
+
+          FAILED=""
+          while read -r job; do
+            [ -n "$job" ] || continue
+            NAME=$(jq -r .name <<<"$job")
+            STEPS=$(jq -r .steps <<<"$job")
+            if [ "$JOB_SUMMARIES" != true ]; then
+              FAILED="$FAILED- **$NAME** — failed at _${STEPS}_"$'\n'
+              continue
+            fi
+            # The job's ::error:: lines, without the runner's closing "Process completed with exit code 1."
+            ERRORS=$(gh api "repos/${{ github.repository }}/check-runs/$(jq -r .id <<<"$job")/annotations" \
+              --jq '.[] | select(.annotation_level == "failure" and (.message | startswith("Process completed with exit code") | not)) | "- \(.message | gsub("\n"; " "))"' || true)
+            FAILED="$FAILED### $NAME"$'\n\n'"Failed at **${STEPS}**"$'\n\n'"${ERRORS:+$ERRORS$'\n\n'}"
+            SUMMARY="summaries/e2e-summary-$NAME/summary.md"
+            [ ! -f "$SUMMARY" ] || FAILED="$FAILED$(cat "$SUMMARY")"$'\n\n'
+          done <<<"$JOBS"
+
           if [ -z "$FAILED" ]; then
             FAILED="_(no failed jobs reported by the API yet)_"
+          elif [ "${#FAILED}" -gt 20000 ]; then
+            FAILED="${FAILED:0:20000}"$'\n\n'"_(cut at 20,000 characters, the rest is in the run)_"
           fi
-          
+
           {
             echo "failed_jobs<<CTXEOF"
             echo "$FAILED"
@@ -41,7 +83,7 @@ jobs:
           LINEAR_STATUS_PLAN_ID: ${{ secrets.LINEAR_STATUS_PLAN_ID }}
           LINEAR_PROJECT_INGESTION_FOR_EVERYTHING_ID: ${{ secrets.LINEAR_PROJECT_INGESTION_FOR_EVERYTHING_ID }}
           LINEAR_ASSIGNEE_PETR_ID: ${{ secrets.LINEAR_ASSIGNEE_PETR_ID }}
-          WORKFLOW: ${{ github.event.workflow_run.name || github.workflow }}
+          WORKFLOW: ${{ inputs.test_name || github.event.workflow_run.name || github.workflow }}
           REF_NAME: ${{ github.event.workflow_run.head_branch || github.ref_name }}
           RUN_URL: ${{ github.event.workflow_run.html_url || format('{0}/{1}/actions/runs/{2}', github.server_url, github.repository, github.run_id) }}
           RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt || github.run_attempt }}
@@ -51,32 +93,32 @@ jobs:
           FAILED_JOBS: ${{ steps.ctx.outputs.failed_jobs }}
         run: |
           SHORT_SHA="${SHA:0:7}"
-          
+
           # head_commit is only populated on push events; skip the line otherwise
           COMMIT_LINE="**Commit:** \`$SHORT_SHA\`"
           if [ -n "$COMMIT_MESSAGE" ]; then
             COMMIT_SUBJECT="$(printf '%s' "$COMMIT_MESSAGE" | head -n1)"
             COMMIT_LINE="**Commit:** \`$SHORT_SHA\` — $COMMIT_SUBJECT"
           fi
-          
+
           ATTEMPT_NOTE=""
           if [ "$RUN_ATTEMPT" != "1" ]; then
             ATTEMPT_NOTE=" (attempt #$RUN_ATTEMPT)"
           fi
-          
+
           TITLE="E2E failure: $WORKFLOW"
           DESCRIPTION=$(cat <<EOF
           **$WORKFLOW** failed on \`$REF_NAME\` via \`$EVENT_NAME\`$ATTEMPT_NOTE
-          
+
           **Failing jobs:**
           $FAILED_JOBS
-          
+
           $COMMIT_LINE
-          
+
           [View failing run]($RUN_URL)
           EOF
           )
-          
+
           PAYLOAD=$(jq -n \
             --arg title "$TITLE" \
             --arg description "$DESCRIPTION" \
@@ -98,7 +140,7 @@ jobs:
                 }
               }
             }')
-          
+
           curl -sSf -X POST https://api.linear.app/graphql \
             -H "Authorization: $LINEAR_API_KEY" \
             -H 'Content-Type: application/json' \
