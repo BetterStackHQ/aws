@@ -268,6 +268,32 @@ jobs:
       - name: "[Test] Read everything back through the SQL API connection"
         run: |
           set -o pipefail
+          mkdir -p out
+          fail() { FAILURE="$1"; echo "::error::$1"; exit 1; }
+          # Every way this step fails still leaves a summary: what arrived against what was expected, and, after a
+          # timeout, what CloudWatch Logs did with each group.
+          summarize_failure() {
+            local status=$?
+            [ "$status" = 0 ] && return
+            {
+              echo "### AWS CloudFormation stack E2E \`$RUN_ID\`"
+              echo
+              echo "❌ ${FAILURE:-The read-back stopped on an error, see the log of this step}"
+              if [ -n "${LOGS:-}" ]; then
+                echo
+                echo "| read back through \`$CONNECT_HOST\` | arrived | expected |"
+                echo "|---|---|---|"
+                echo "| logs of \`$LOG_GROUP\` | $LOGS | 20 |"
+                echo "| logs of \`$STATIC_LOG_GROUP\` | $STATIC_LOGS | 20 |"
+                echo "| spans | $SPANS | 2 |"
+                echo "| metric points | $METRICS | 15 |"
+                echo "| CloudTrail event | $CLOUDTRAIL | 1 |"
+              fi
+              [ ! -f out/forwarding.md ] || { echo; cat out/forwarding.md; }
+            } > out/summary.md
+            exit "$status"
+          }
+          trap summarize_failure EXIT
           sql() {
             CODE=$(curl -sS -o response.json -w '%{http_code}' -u "$TEST_TEAM_CONNECTION_USERNAME:$TEST_TEAM_CONNECTION_PASSWORD" -H 'Content-Type: plain/text' --data-binary "$1 FORMAT JSONEachRow" "https://$CONNECT_HOST/")
             # A source's logs, spans and metrics collections each exist only from their first stored row on;
@@ -295,13 +321,21 @@ jobs:
           # What CloudWatch Logs did with each group in the last 40 min; DeliveryErrors mean the filter paused for 10 min
           # and skipped what arrived meanwhile.
           forwarding() {
+            {
+              echo "| CloudWatch Logs, last 40 min | incoming | forwarded | delivery errors |"
+              echo "|---|---|---|---|"
+            } > out/forwarding.md
             for group in "$LOG_GROUP" "$STATIC_LOG_GROUP" aws/spans /aws/cloudtrail/better-stack; do
+              ROW="| \`$group\` |"
               for metric in IncomingLogEvents ForwardedLogEvents DeliveryErrors; do
                 DIMS="Name=LogGroupName,Value=$group"
                 [ "$metric" = IncomingLogEvents ] || DIMS="$DIMS Name=DestinationType,Value=Firehose Name=FilterName,Value=BetterStackLogs"
-                echo "$group $metric $(aws cloudwatch get-metric-statistics --namespace AWS/Logs --metric-name "$metric" --dimensions $DIMS \
-                  --start-time "$(date -u -d '-40 minutes' +%FT%TZ)" --end-time "$(date -u +%FT%TZ)" --period 2400 --statistics Sum --query 'sum(Datapoints[].Sum)' --output text)"
+                VALUE=$(aws cloudwatch get-metric-statistics --namespace AWS/Logs --metric-name "$metric" --dimensions $DIMS \
+                  --start-time "$(date -u -d '-40 minutes' +%FT%TZ)" --end-time "$(date -u +%FT%TZ)" --period 2400 --statistics Sum --query 'sum(Datapoints[].Sum)' --output text)
+                echo "$group $metric $VALUE"
+                ROW="$ROW ${VALUE%.0} |"
               done
+              echo "$ROW" >> out/forwarding.md
             done
           }
           # Within an hour of the previous stack deletion the static group, aws/spans and CloudTrail may deliver nothing
@@ -316,7 +350,7 @@ jobs:
           while :; do
             counts
             arrived && break
-            [ "$SECONDS" -lt "$DEADLINE" ] || { echo "::error::not everything arrived within 20 min"; forwarding; mkdir -p out; sql "SELECT dt, raw FROM remote(${COLLECTION}_spans) WHERE $SINCE ORDER BY dt DESC LIMIT 3" > out/sample_spans.json; exit 1; }
+            [ "$SECONDS" -lt "$DEADLINE" ] || { forwarding; sql "SELECT dt, raw FROM remote(${COLLECTION}_spans) WHERE $SINCE ORDER BY dt DESC LIMIT 3" > out/sample_spans.json; fail "Not everything arrived within 20 min"; }
             sleep 20
           done
           # A last look 60 s later catches duplicate delivery. Every count must be exact; within that hour a fixed-name
@@ -328,8 +362,7 @@ jobs:
             IFS=: read -r name got want <<<"$check"
             [ "$got" = "$want" ] && continue
             if [ -n "${RECENT_STACK_MIN:-}" ] && [ "$name" != logs ] && [ "$got" = 0 ]; then MISSING+=("$name"); continue; fi
-            echo "::error::unexpected row counts: logs $LOGS (20), static $STATIC_LOGS (20), spans $SPANS (2), CloudTrail event $CLOUDTRAIL (1)"
-            exit 1
+            fail "Unexpected row counts: logs $LOGS (20), static $STATIC_LOGS (20), spans $SPANS (2), CloudTrail event $CLOUDTRAIL (1)"
           done
           # Each minute must hold exactly the value sent in it: 1, 2 and 3 for the metric, _max, _min and _sum, 1 for _count.
           # The lowest and highest stored value per point catch a re-sent minute with a different value. Points are
@@ -339,20 +372,19 @@ jobs:
             | {name, minute: $t, min: .v, max: .v}] | sort_by(.name, .minute)')
           ACTUAL=$(sql "SELECT name, toUnixTimestamp(dt) AS t, minMerge(value_min) AS min, maxMerge(value_max) AS max FROM remote(${COLLECTION}_metrics) WHERE $SINCE AND $METRIC_FILTER GROUP BY name, dt" \
             | jq -sc 'map({name, minute: (((.t | tonumber) / 60 | floor) * 60), min: (.min | tonumber), max: (.max | tonumber)}) | sort_by(.name, .minute)')
-          [ "$ACTUAL" = "$EXPECTED" ] || { echo "::error::metric points differ from the datapoints sent: expected $EXPECTED, got $ACTUAL"; exit 1; }
+          [ "$ACTUAL" = "$EXPECTED" ] || fail "Metric points differ from the datapoints sent: expected $EXPECTED, got $ACTUAL"
           if [ "${#MISSING[@]}" -gt 0 ]; then
             NAMES=$(printf '%s\n' "${MISSING[@]}" | sed -e "s#^static\$#the logs of $STATIC_LOG_GROUP#" -e 's#^spans$#the spans#' -e 's#^cloudtrail$#the CloudTrail event#' | paste -sd, - | sed 's/,/, /g')
             WARNING="Not verified: $NAMES. The previous run deleted its stack $RECENT_STACK_MIN min before this one, and for up to an hour AWS keeps using sessions of the IAM roles every run recreates under the same names, so CloudWatch Logs and CloudTrail can skip this data. A run more than an hour after the previous one checks it."
             echo "::warning::$WARNING"
             forwarding
           fi
-          mkdir -p out
           sql "SELECT dt, raw FROM remote(${COLLECTION}_logs) WHERE $SINCE AND position(raw, '$MARKER') > 0 ORDER BY dt LIMIT 1" > out/sample_log.json
           if [ "$SPANS" = 2 ]; then
             sql "SELECT dt, raw FROM remote(${COLLECTION}_spans) WHERE $SINCE AND JSONExtractString(raw, 'span', 'name') IN ('e2e-parent-$RUN_ID', 'e2e-child-$RUN_ID') ORDER BY JSONExtractUInt(raw, 'span', 'start_time_unix_nano')" > out/sample_spans.json
             # The X-Ray trace id 1-<epoch>-<random> should be stored as the 32-hex id the mapper takes from Transaction Search.
             STORED_TRACE_IDS=$(jq -r '.raw | fromjson | .span.trace_id' out/sample_spans.json | sort -u | tr '\n' ' ')
-            [ "$STORED_TRACE_IDS" = "$TRACE_HEX " ] || { echo "::error::stored span trace ids '$STORED_TRACE_IDS' differ from the X-Ray trace id $TRACE_HEX"; exit 1; }
+            [ "$STORED_TRACE_IDS" = "$TRACE_HEX " ] || fail "Stored span trace ids '$STORED_TRACE_IDS' differ from the X-Ray trace id $TRACE_HEX"
           fi
           sql "SELECT name, dt, tags, avgMerge(value_avg) AS value FROM remote(${COLLECTION}_metrics) WHERE $SINCE AND tags['run_id'] = '$RUN_ID' AND name = '$METRIC' GROUP BY name, dt, tags ORDER BY dt" > out/sample_metric.json
           [ "$CLOUDTRAIL" = 0 ] || sql "SELECT dt, raw FROM remote(${COLLECTION}_logs) WHERE $SINCE AND JSONExtractString(raw, 'message', 'eventName') = 'PutRetentionPolicy' AND JSONExtractString(raw, 'message', 'requestParameters', 'logGroupName') = '$LOG_GROUP'" > out/sample_cloudtrail.json
@@ -366,6 +398,8 @@ jobs:
             if [ "${#MISSING[@]}" -gt 0 ]; then
               echo "⚠️ $WARNING"
               echo
+              cat out/forwarding.md
+              echo
               echo "✅ everything else round-tripped through the stack"
             else
               echo "✅ logs, metrics, spans and CloudTrail events round-tripped through the stack"
@@ -378,15 +412,44 @@ jobs:
 
       - name: "[Report] Job summary"
         if: ${{ always() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          if [ -f out/summary.md ]; then cat out/summary.md >> "$GITHUB_STEP_SUMMARY"; else echo "No summary, the run failed before verification." >> "$GITHUB_STEP_SUMMARY"; fi
+          mkdir -p report
+          if [ -f out/summary.md ]; then
+            cp out/summary.md report/summary.md
+          else
+            # The read-back writes the summary however it ends, so a step before it failed (or the job was cancelled).
+            FAILED_STEP=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs" \
+              --jq ".jobs[] | select(.runner_name == \"$RUNNER_NAME\") | .steps[] | select(.conclusion == \"failure\") | .name" | head -1) || true
+            { echo "### AWS CloudFormation stack E2E \`$RUN_ID\`"; echo; echo "❌ Stopped${FAILED_STEP:+ at **$FAILED_STEP**}, before anything was read back."; } > report/summary.md
+          fi
+          cat report/summary.md >> "$GITHUB_STEP_SUMMARY"
+          # The Linear issue gets the cleanup only when it left something behind.
+          grep -q '❌' out/cleanup.md 2>/dev/null && { echo; cat out/cleanup.md; } >> report/summary.md
           # Rows come back as JSONEachRow with the stored event as a JSON string in raw; render them as a pretty array.
           for f in out/sample_*.json; do [ -f "$f" ] && { echo; echo "<details><summary>$(basename "$f")</summary>"; echo; echo '```json'; jq -s 'map(if has("raw") then .raw |= (fromjson? // .) else . end)' "$f"; echo '```'; echo '</details>'; echo; } >> "$GITHUB_STEP_SUMMARY"; done
           [ -f out/cleanup.md ] && { echo; cat out/cleanup.md; } >> "$GITHUB_STEP_SUMMARY"
           true
 
+      - name: "[Report] Hand the summary to the Linear issue"
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-summary-Stack round trip
+          path: report/summary.md
+          retention-days: 7
+          overwrite: true
+
   notify-linear:
     if: ${{ failure() && (github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) }}
     needs: [test]
+    permissions:
+      contents: read
+      actions: read
+      checks: read
     uses: ./.github/workflows/notify_linear_failure.yml
+    with:
+      test_name: AWS CloudFormation stack
+      job_summaries: true
     secrets: inherit
