@@ -11,27 +11,19 @@ on:
       job_summaries:
         description: >-
           Adds each failed job's errors and summary to the issue. A job hands its summary over as an artifact named
-          "e2e-summary-<job name>" holding summary.md. The calling job needs checks: read for the errors.
+          "e2e-summary-<job name>" holding summary.md.
         type: boolean
         default: false
 
 jobs:
   create-linear-issue:
     runs-on: ubuntu-latest
+    # A caller must grant checks: read as well (the errors come from the annotations), or this job cannot start.
     permissions:
       contents: read
       actions: read
       checks: read
     steps:
-      - name: "Download the jobs' summaries"
-        if: ${{ inputs.job_summaries }}
-        continue-on-error: true
-        uses: actions/download-artifact@v8
-        with:
-          pattern: e2e-summary-*
-          path: summaries
-          run-id: ${{ github.event.workflow_run.id || github.run_id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: "Gather failure context"
         id: ctx
         env:
@@ -59,12 +51,15 @@ jobs:
             fi
             # The job's ::error:: lines, without the runner's closing "Process completed with exit code 1."
             ERRORS=$(gh api "repos/${{ github.repository }}/check-runs/$(jq -r .id <<<"$job")/annotations" \
-              --jq '.[] | select(.annotation_level == "failure" and (.message | startswith("Process completed with exit code") | not)) | "- \(.message | gsub("\n"; " "))"' || true)
+              --jq '.[] | select(.annotation_level == "failure" and (.message | startswith("Process completed with exit code") | not)) | "- \(.message | gsub("\n"; " "))"') || ERRORS=""
             FAILED="$FAILED### $NAME"$'\n\n'"Failed at **${STEPS}**"$'\n\n'"${ERRORS:+$ERRORS$'\n\n'}"
-            SUMMARY="summaries/e2e-summary-$NAME/summary.md"
-            [ ! -f "$SUMMARY" ] || FAILED="$FAILED$(cat "$SUMMARY")"$'\n\n'
+            # A job that failed before writing its summary has no artifact and gets the errors alone.
+            SUMMARY_DIR="summaries/$(jq -r .id <<<"$job")"
+            gh run download "$RUN_ID" -R "${{ github.repository }}" -n "e2e-summary-$NAME" -D "$SUMMARY_DIR" >/dev/null 2>&1 || true
+            [ ! -f "$SUMMARY_DIR/summary.md" ] || FAILED="$FAILED$(cat "$SUMMARY_DIR/summary.md")"$'\n\n'
           done <<<"$JOBS"
 
+          while [[ "$FAILED" == *$'\n' ]]; do FAILED="${FAILED%$'\n'}"; done
           if [ -z "$FAILED" ]; then
             FAILED="_(no failed jobs reported by the API yet)_"
           elif [ "${#FAILED}" -gt 20000 ]; then
