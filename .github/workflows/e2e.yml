@@ -32,6 +32,10 @@ on:
       template_url:
         description: 'Template to deploy instead of the checkout (any URL)'
         type: string
+      hold_for_removal:
+        description: 'Skip the read-back, keep the connected source until someone removes it in Better Stack, then expect its log groups to lose the subscription filter'
+        type: boolean
+        default: false
 
 permissions:
   id-token: write
@@ -239,6 +243,7 @@ jobs:
           done
 
       - name: "[Test] Produce logs, a custom metric, a two-segment trace and a CloudTrail management event"
+        if: ${{ !inputs.hold_for_removal }}
         run: |
           echo "SINCE=dt > toDateTime('$(date -u -d '-10 minutes' '+%F %T')')" >> "$GITHUB_ENV"
           for group in "$LOG_GROUP" "$STATIC_LOG_GROUP"; do
@@ -266,6 +271,7 @@ jobs:
           echo "20 log events into each of $LOG_GROUP and $STATIC_LOG_GROUP, 3 datapoints of E2eTest/AwsStack RunMarker, trace $TRACE_ID, PutRetentionPolicy on $LOG_GROUP"
 
       - name: "[Test] Read everything back through the SQL API connection"
+        if: ${{ !inputs.hold_for_removal }}
         run: |
           set -o pipefail
           mkdir -p out
@@ -402,6 +408,40 @@ jobs:
               echo "✅ logs, metrics, spans and CloudTrail events round-tripped through the stack"
             fi
           } > out/summary.md
+
+      # For checking a source removal in Better Stack by hand (workflow_dispatch with hold_for_removal): the connected
+      # source stays until someone removes it, and the removal should take the subscription filter off every log group
+      # the first sync subscribed, while the stack and its integration role still exist.
+      - name: "[Hold] Wait until the source is removed, then until its log groups lose the subscription filter"
+        if: ${{ inputs.hold_for_removal }}
+        run: |
+          echo "source $SOURCE_ID is connected and its log groups are subscribed; remove it in Better Stack within 45 min"
+          DEADLINE=$((SECONDS + 2700))
+          until [ "$(curl -sS -o /dev/null -w '%{http_code}' "$API/api/v1/sources/$SOURCE_ID" -H "Authorization: Bearer $TEST_TEAM_TELEMETRY_API")" = 404 ]; do
+            [ "$SECONDS" -lt "$DEADLINE" ] || { echo "::error::source $SOURCE_ID was not removed within 45 min"; exit 1; }
+            sleep 15
+          done
+          REMOVED_AT=$(date -u +%T)
+          echo "source $SOURCE_ID is gone at $REMOVED_AT UTC"
+          # The removal archives the source at once and destroys it in a background job, which enqueues the teardown.
+          DEADLINE=$((SECONDS + 900))
+          while :; do
+            SUBSCRIBED=""
+            for group in "$LOG_GROUP" "$STATIC_LOG_GROUP" aws/spans /aws/cloudtrail/better-stack; do
+              N=$(aws logs describe-subscription-filters --log-group-name "$group" --query "length(subscriptionFilters[?filterName=='BetterStackLogs'])" --output text) || N="?"
+              [ "$N" = 0 ] || SUBSCRIBED="$SUBSCRIBED $group"
+            done
+            [ -z "$SUBSCRIBED" ] && break
+            [ "$SECONDS" -lt "$DEADLINE" ] || { echo "::error::15 min after the removal still subscribed:$SUBSCRIBED"; exit 1; }
+            echo "still subscribed:$SUBSCRIBED"; sleep 15
+          done
+          mkdir -p out
+          {
+            echo "### AWS CloudFormation stack E2E \`$RUN_ID\` (hold for removal)"
+            echo
+            echo "- source $SOURCE_ID on \`$DATA_REGION\`, stack \`$STACK_NAME\`, removed in Better Stack at $REMOVED_AT UTC"
+            echo "- by $(date -u +%T) UTC no BetterStackLogs filter left on \`$LOG_GROUP\`, \`$STATIC_LOG_GROUP\`, \`aws/spans\` and \`/aws/cloudtrail/better-stack\`"
+          } | tee out/summary.md
 
       - name: "[Cleanup] Delete this run's resources in Better Stack and AWS"
         if: ${{ always() }}
