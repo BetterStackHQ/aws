@@ -95,4 +95,4 @@ bundle exec rspec spec/lambda/firehose_logs_tag_enrichment_spec.rb
 
 ## Deployment
 
-Lambda code is deployed via CloudFormation from regional S3 buckets (`better-stack-lambda-{region}`), referenced in the CloudFormation stack. See the [CloudFormation README](../cloudformation/full/README.md) for deployment commands.
+`build.sh` packages both functions as `dist/<function>.zip`. The template deploys them from `X.Y.Z/<function>.zip` in the regional S3 buckets (`better-stack-lambda-{region}`), where `X.Y.Z` is the release the template was stamped with. See [Releases](../cloudformation/full/README.md#releases) in the CloudFormation README.

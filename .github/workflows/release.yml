@@ -1,0 +1,98 @@
+name: Release
+
+# A tag vX.Y.Z on main makes the release: the two Lambda zips built from the tag, the template with the version
+# stamped in (its functions read X.Y.Z/<zip> from better-stack-lambda-<region>) and SHA256SUMS, attached to the
+# GitHub Release vX.Y.Z. Deploying is a separate step with the deploy recipe: the zips go under X.Y.Z/ in every
+# regional bucket, the template to X.Y.Z/better-stack-full.yaml in the template bucket, and a copy of it to
+# better-stack-full.yaml, the "latest" the product links to. Versioned keys are never overwritten, only latest is.
+# workflow_dispatch builds the same artifacts for a version as a workflow artifact, without a release, to try the
+# build or to inspect what a release would contain.
+
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to stamp, X.Y.Z (builds the artifacts, makes no release)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  AWS_REGION: us-east-1
+  # The E2E account's role (see e2e.yml), used only to validate the stamped template.
+  AWS_ROLE_ARN: arn:aws:iam::251917137055:role/github-actions-e2e
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Version from the tag
+        run: |
+          if [ "${{ github.event_name }}" = push ]; then VERSION="${GITHUB_REF_NAME#v}"; else VERSION="${{ inputs.version }}"; fi
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::version '$VERSION' is not X.Y.Z"; exit 1; }
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "version $VERSION"
+
+      # A release is cut from main: a tag on any other commit is refused before anything is built.
+      - name: The tagged commit is on main
+        if: ${{ github.event_name == 'push' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          STATUS=$(gh api "repos/${{ github.repository }}/compare/main...${{ github.sha }}" --jq .status)
+          case "$STATUS" in
+            identical|behind) echo "${{ github.sha }} is on main ($STATUS)";;
+            *) echo "::error::${{ github.ref_name }} points at ${{ github.sha }}, which is not on main ($STATUS)"; exit 1;;
+          esac
+
+      - name: Build the Lambda zips
+        run: lambda/build.sh
+
+      - name: Stamp the template and write the checksums
+        run: |
+          mkdir release
+          sed "s/^      Version: 0\.0\.0-dev$/      Version: $VERSION/" cloudformation/full/better-stack-full.yaml > release/better-stack-full.yaml
+          grep -q "^      Version: $VERSION$" release/better-stack-full.yaml || { echo "::error::the template has no 'Version: 0.0.0-dev' line to stamp"; exit 1; }
+          cp lambda/dist/firehose_logs_tag_enrichment.zip lambda/dist/firehose_metrics_tag_enrichment.zip release/
+          cd release
+          sha256sum firehose_logs_tag_enrichment.zip firehose_metrics_tag_enrichment.zip better-stack-full.yaml > SHA256SUMS
+          cat SHA256SUMS
+
+      - uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: The stamped template is valid CloudFormation
+        run: aws cloudformation validate-template --template-body file://release/better-stack-full.yaml >/dev/null
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ env.VERSION }}
+          path: release/
+          retention-days: 30
+
+      - name: Create the GitHub Release
+        if: ${{ github.event_name == 'push' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "Better Stack AWS integration $VERSION: the CloudFormation template and the code of its two tag enrichment Lambdas."
+            echo
+            echo "Deploy with the deploy recipe, which uploads the zips to \`$VERSION/\` in every \`better-stack-lambda-<region>\` bucket, the template to \`$VERSION/better-stack-full.yaml\` in the template bucket, and copies it to \`better-stack-full.yaml\` (latest). The template deploys the functions from \`$VERSION/\`, so a stack updated to this template runs this code."
+            echo
+            echo '```'
+            cat release/SHA256SUMS
+            echo '```'
+          } > notes.md
+          gh release create "${{ github.ref_name }}" --verify-tag --title "${{ github.ref_name }}" --notes-file notes.md \
+            release/firehose_logs_tag_enrichment.zip release/firehose_metrics_tag_enrichment.zip release/better-stack-full.yaml release/SHA256SUMS
+          echo "released https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}"

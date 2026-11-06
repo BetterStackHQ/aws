@@ -9,6 +9,7 @@ This repository contains CloudFormation stacks and Lambda functions for streamin
 | [cloudformation/full/](cloudformation/full/README.md) | CloudFormation template and deployment guide |
 | [lambda/](lambda/README.md) | Firehose transformation Lambda functions |
 | [e2e/](.github/workflows/e2e.yml) | End-to-end test: deploys the template into a throwaway AWS account on every pull request, push to main and daily |
+| [release.yml](.github/workflows/release.yml) | A tag `vX.Y.Z` builds the Lambda zips and the stamped template into a GitHub Release (see [Releases](cloudformation/full/README.md#releases)) |
 
 ## Getting Started
 

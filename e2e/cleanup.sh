@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Deletes everything the E2E workflow creates: its sources in Better Stack, every e2e-gh* stack in the AWS account
 # (runs are named e2e-gh<run id>a<attempt>; e2e-bootstrap is the standing OIDC stack and must stay), the buckets the
-# stack retains by design, aws/spans and /aws/application-signals/data (X-Ray Transaction Search creates them outside
+# stack retains by design, the bucket the run uploads the checkout's Lambda code to, aws/spans and /aws/application-signals/data (X-Ray Transaction Search creates them outside
 # the stack) and the /e2e/* log groups. The workflow runs this twice: before a run, so leftovers of a killed cleanup
 # never block the next run, and after it. One run at a time per account (the workflow's concurrency group), so nothing
 # with these names belongs to a live run.
@@ -35,7 +35,7 @@ for stack in $STACKS; do
 done
 
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text) || { could_not_list buckets; ACCOUNT_ID=""; }
-for bucket in "better-stack-firehose-$ACCOUNT_ID-$AWS_REGION" "better-stack-cloudtrail-$ACCOUNT_ID-$AWS_REGION"; do
+for bucket in "better-stack-firehose-$ACCOUNT_ID-$AWS_REGION" "better-stack-cloudtrail-$ACCOUNT_ID-$AWS_REGION" "better-stack-e2e-lambda-code-$ACCOUNT_ID-$AWS_REGION"; do
   [ -n "$ACCOUNT_ID" ] && aws s3api head-bucket --bucket "$bucket" >/dev/null 2>&1 || continue
   if aws s3 rb "s3://$bucket" --force >/dev/null; then say "- deleted bucket \`$bucket\`"; else say "- ❌ could not delete bucket \`$bucket\`"; touch cleanup.failed; fi
 done

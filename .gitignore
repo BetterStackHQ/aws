@@ -3,3 +3,5 @@
 Thumbs.db
 
 .claude/
+# Lambda zips built by lambda/build.sh
+lambda/dist/
