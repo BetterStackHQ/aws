@@ -1,12 +1,12 @@
 # Lambda Functions
 
-Firehose transformation Lambda functions that enrich CloudWatch data with AWS resource tags and properties before delivery to Better Stack.
+Firehose transformation Lambda functions that enrich CloudWatch data with AWS resource tags and properties before delivery to Better Stack. They are written in Rust and run on the OS-only `provided.al2023` runtime on arm64: each binary is zipped as `bootstrap`.
 
 See the [main README](../README.md) for an overview or the [CloudFormation deployment guide](../cloudformation/full/README.md) for deployment instructions.
 
 ## Functions
 
-### firehose_metrics_tag_enrichment.rb
+### firehose_metrics_tag_enrichment
 
 Enriches CloudWatch Metric Stream data with resource tags and properties.
 
@@ -24,7 +24,7 @@ Enriches CloudWatch Metric Stream data with resource tags and properties.
 - `AWS/S3` - Bucket tags
 - `AWS/ELB`, `AWS/ApplicationELB`, `AWS/NetworkELB` - Load balancer tags
 
-### firehose_logs_tag_enrichment.rb
+### firehose_logs_tag_enrichment
 
 Enriches CloudWatch Logs with resource tags extracted from log group/stream names.
 
@@ -67,32 +67,25 @@ Both functions:
 
 ## Local Development
 
-### Prerequisites
-
-```bash
-bundle install
-```
+The crate is `lambda/`: `src/logs.rs` and `src/metrics.rs` hold each function's logic, `src/tags.rs` the shared tag cache, `src/aws.rs` the AWS SDK calls, and `src/bin/` the two Lambda entry points.
 
 ### Running Tests
 
 ```bash
-bundle exec rspec spec/lambda/
+cd lambda
+cargo test
 ```
 
-Or run specific tests:
+The tests replace the AWS APIs with an in-memory fake (`src/fake.rs`), so they need no credentials.
+
+### Building the zips
 
 ```bash
-bundle exec rspec spec/lambda/firehose_metrics_tag_enrichment_spec.rb
-bundle exec rspec spec/lambda/firehose_logs_tag_enrichment_spec.rb
+lambda/build.sh
 ```
 
-### Dependencies
-
-- `aws-sdk-resourcegroupstaggingapi` - Tag lookups
-- `aws-sdk-ec2` - EC2/EBS property lookups
-- `aws-sdk-rds` - RDS property lookups
-- `aws-sdk-lambda` - Lambda property lookups
+It builds both functions inside Amazon Linux 2023 on an arm64 host with Docker, so the binaries link against the glibc the Lambda runtime has, and writes `lambda/dist/firehose_logs_tag_enrichment.zip` and `lambda/dist/firehose_metrics_tag_enrichment.zip`. The E2E workflow builds them on every pull request and keeps them as the `lambda-zips` artifact.
 
 ## Deployment
 
-Lambda code is deployed via CloudFormation from regional S3 buckets (`better-stack-lambda-{region}`), referenced in the CloudFormation stack. See the [CloudFormation README](../cloudformation/full/README.md) for deployment commands.
+The template takes the code from `rust/<function>.zip` in the regional S3 bucket `better-stack-lambda-{region}`. Releasing new code means uploading both zips under `rust/` to every regional bucket before publishing a template that needs them. The E2E workflow uploads the zips it builds to a bucket of its own and points its copy of the template at it. See the [CloudFormation README](../cloudformation/full/README.md) for deployment commands.

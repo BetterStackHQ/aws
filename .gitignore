@@ -3,3 +3,7 @@
 Thumbs.db
 
 .claude/
+# Rust build output and the Docker build cache
+lambda/target/
+lambda/.cache/
+lambda/dist/

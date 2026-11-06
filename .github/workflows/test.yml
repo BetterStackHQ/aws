@@ -9,18 +9,24 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        spec:
-          - spec/lambda/firehose_metrics_tag_enrichment_spec.rb
-          - spec/lambda/firehose_logs_tag_enrichment_spec.rb
+    defaults:
+      run:
+        working-directory: lambda
     steps:
       - uses: actions/checkout@v7
 
-      - uses: ruby/setup-ruby@v1
+      - uses: actions/cache@v6
         with:
-          ruby-version: '3.2'
-          bundler-cache: true
+          path: |
+            ~/.cargo/registry
+            lambda/target
+          key: cargo-test-${{ hashFiles('lambda/Cargo.lock') }}
 
       - name: Run tests
-        run: bundle exec rspec ${{ matrix.spec }} --format documentation
+        run: cargo test --locked
+
+      - name: Lint
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Check formatting
+        run: cargo fmt --check

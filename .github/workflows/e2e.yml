@@ -3,9 +3,11 @@ name: "E2E"
 # Deploys the CloudFormation template into a throwaway AWS account the way a customer does: creates an AWS source,
 # deploys the stack with that source's ClusterId/SourceToken/SourceId, pastes the stack outputs back into the source,
 # checks that the first sync subscribes the run's log group, the static group, aws/spans and the CloudTrail group by
-# itself, then produces logs, a custom metric, an X-Ray trace and a CloudTrail management event in AWS and reads all of
-# them back through the team's SQL API connection with exact row counts. Pull requests and pushes to main deploy the
-# template from the checkout; the daily schedule deploys the published one and fails when it differs from main. Everything the run creates in AWS and Better Stack is named after
+# itself, then produces logs, custom metrics, X-Ray traces and a CloudTrail management event in AWS and reads all of
+# them back through the team's SQL API connection with exact row counts (the amounts are the LOG_EVENTS, TRACES and
+# METRIC_SERIES below: enough invocations and payload for the tag enrichment Lambdas to be measured). Pull requests and pushes to main deploy the
+# template from the checkout, with the tag-enrichment Lambdas built from the checkout and uploaded to a bucket in the
+# account; the daily schedule deploys the published one and fails when it differs from main. Everything the run creates in AWS and Better Stack is named after
 # RUN_ID and deleted in the cleanup step, together with leftovers of earlier runs. Within an hour of the previous run's
 # stack deletion, the static group, aws/spans and CloudTrail delivering nothing is a warning instead of a failure (see
 # the step that measures it). The docs check fails when the docs article stops naming a template toggle or output.
@@ -57,14 +59,39 @@ env:
   # Recreated under the same name by every run, so Better Stack sees it with the history of the previous runs.
   STATIC_LOG_GROUP: /e2e/static
   MARKER: e2e run_id=gh${{ github.run_id }}a${{ github.run_attempt }}
+  # Log events per group (in rounds of 20, one Firehose batch each), two-segment traces, and series of the RunLoad metric.
+  LOG_EVENTS: 200
+  TRACES: 10
+  METRIC_SERIES: 50
   TEST_TEAM_TELEMETRY_API: ${{ secrets.TEST_TEAM_TELEMETRY_API }}
   TEST_TEAM_CONNECTION_USERNAME: ${{ secrets.TEST_TEAM_CONNECTION_USERNAME }}
   TEST_TEAM_CONNECTION_PASSWORD: ${{ secrets.TEST_TEAM_CONNECTION_PASSWORD }}
 
 jobs:
+  build-lambdas:
+    name: Build the Lambdas
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/cache@v6
+        with:
+          path: lambda/.cache
+          key: lambda-build-${{ hashFiles('lambda/Cargo.lock') }}
+
+      - name: Build the Lambda zips
+        run: lambda/build.sh
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: lambda-zips
+          path: lambda/dist/*.zip
+          retention-days: 7
+
   test:
     name: Stack round trip
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    needs: [build-lambdas]
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
@@ -175,6 +202,25 @@ jobs:
             aws logs create-log-stream --log-group-name "$group" --log-stream-name run
           done
 
+      - name: "[Setup] Download the Lambdas built from the checkout"
+        if: ${{ startsWith(env.TEMPLATE_FROM, 'this checkout') }}
+        uses: actions/download-artifact@v8
+        with:
+          name: lambda-zips
+          path: lambda-zips
+
+      # better-stack-lambda-<region> holds only released code, so the checkout's template is pointed at a bucket of the
+      # run's own. The cleanup deletes it.
+      - name: "[Setup] Upload the Lambdas built from the checkout and point the template at them"
+        if: ${{ startsWith(env.TEMPLATE_FROM, 'this checkout') }}
+        run: |
+          BUCKET="better-stack-e2e-lambda-code-$ACCOUNT_ID-$AWS_REGION"
+          aws s3 mb "s3://$BUCKET" >/dev/null
+          aws s3 cp lambda-zips/ "s3://$BUCKET/rust/" --recursive --exclude '*' --include '*.zip'
+          sed -i "s|better-stack-lambda-\${AWS::Region}|$BUCKET|g" template.yaml
+          grep -q "$BUCKET" template.yaml || { echo "::error::the template no longer names better-stack-lambda-\${AWS::Region}, this step needs updating"; exit 1; }
+          ls -l lambda-zips
+
       - name: "[Test] Deploy the CloudFormation stack"
         run: |
           aws cloudformation create-stack --stack-name "$STACK_NAME" --template-body file://template.yaml --capabilities CAPABILITY_NAMED_IAM \
@@ -238,12 +284,18 @@ jobs:
             echo "waiting for the sync to subscribe:$PENDING"; sleep 15
           done
 
-      - name: "[Test] Produce logs, a custom metric, a two-segment trace and a CloudTrail management event"
+      - name: "[Test] Produce logs, custom metrics, two-segment traces and a CloudTrail management event"
         run: |
           echo "SINCE=dt > toDateTime('$(date -u -d '-10 minutes' '+%F %T')')" >> "$GITHUB_ENV"
-          for group in "$LOG_GROUP" "$STATIC_LOG_GROUP"; do
-            jq -nc --arg m "$MARKER" --arg run "$RUN_ID" --arg g "$group" '[range(1; 21) as $n | {timestamp: ((now * 1000 | floor) + $n), message: ({message: $m, e2e: {run_id: $run, log_group: $g, n: $n}} | tojson)}]' > events.json
-            aws logs put-log-events --log-group-name "$group" --log-stream-name run --log-events file://events.json >/dev/null
+          # 20 events per group per round, 10 s apart, so the logs Firehose hands the Lambda a batch per round; each
+          # message carries about 1 KB of text, as a real log line does.
+          ROUNDS=$((LOG_EVENTS / 20))
+          for round in $(seq 1 "$ROUNDS"); do
+            for group in "$LOG_GROUP" "$STATIC_LOG_GROUP"; do
+              jq -nc --arg m "$MARKER" --arg run "$RUN_ID" --arg g "$group" --argjson r "$round" '[range(1; 21) as $i | (($r - 1) * 20 + $i) as $n | {timestamp: ((now * 1000 | floor) + $n), message: ({message: $m, e2e: {run_id: $run, log_group: $g, n: $n, pad: ([range(1024) | (. * 7919 + $n * 97) % 94 + 33] | implode)}} | tojson)}]' > events.json
+              aws logs put-log-events --log-group-name "$group" --log-stream-name run --log-events file://events.json >/dev/null
+            done
+            [ "$round" = "$ROUNDS" ] || sleep 10
           done
           # Values 1, 2 and 3 in three consecutive minutes; the read-back checks each minute's value.
           T=$(date +%s)
@@ -251,19 +303,28 @@ jobs:
             '[range(3) | {MetricName: "RunMarker", Value: (. + 1), Unit: "Count", Timestamp: ($t - (2 - .) * 60 | todate), Dimensions: [{Name: "RunId", Value: $run}]}]' > metrics.json
           aws cloudwatch put-metric-data --namespace E2eTest/AwsStack --metric-data file://metrics.json
           echo "METRIC_MINUTES=$(((T - 120) / 60 * 60)) $(((T - 60) / 60 * 60)) $((T / 60 * 60))" >> "$GITHUB_ENV"
+          # METRIC_SERIES more series over the same three minutes, so the metrics Lambda gets batches of records to enrich.
+          jq -nc --arg run "$RUN_ID" --argjson t "$T" --argjson series "$METRIC_SERIES" \
+            '[range(3) as $m | range(1; $series + 1) | {MetricName: "RunLoad", Value: ., Unit: "Count", Timestamp: ($t - (2 - $m) * 60 | todate), Dimensions: [{Name: "RunId", Value: $run}, {Name: "Series", Value: tostring}]}]' > load.json
+          aws cloudwatch put-metric-data --namespace E2eTest/AwsStack --metric-data file://load.json
           NOW=$(date +%s)
-          TRACE_ID="1-$(printf '%x' "$NOW")-$(openssl rand -hex 12)"
-          PARENT_ID=$(openssl rand -hex 8)
-          PARENT=$(jq -nc --arg name "e2e-parent-$RUN_ID" --arg id "$PARENT_ID" --arg trace "$TRACE_ID" --arg run "$RUN_ID" --argjson start "$((NOW - 1))" --argjson end "$NOW" \
-            '{name: $name, id: $id, trace_id: $trace, start_time: $start, end_time: $end, annotations: {run_id: $run}}')
-          CHILD=$(jq -nc --arg name "e2e-child-$RUN_ID" --arg id "$(openssl rand -hex 8)" --arg parent "$PARENT_ID" --arg trace "$TRACE_ID" --arg run "$RUN_ID" --argjson start "$((NOW - 1))" --argjson end "$NOW" \
-            '{name: $name, id: $id, parent_id: $parent, trace_id: $trace, start_time: ($start + 0.2), end_time: ($end - 0.2), annotations: {run_id: $run}}')
-          aws xray put-trace-segments --trace-segment-documents "$PARENT" "$CHILD" --query 'UnprocessedTraceSegments' --output json | jq -e 'length == 0' >/dev/null
-          # The X-Ray trace id 1-<8 hex epoch>-<24 hex> is stored as the 32-hex OpenTelemetry id.
-          echo "TRACE_HEX=$(cut -d- -f2,3 <<<"$TRACE_ID" | tr -d -)" >> "$GITHUB_ENV"
+          SEGMENTS=()
+          TRACE_HEXES=""
+          for trace in $(seq 1 "$TRACES"); do
+            TRACE_ID="1-$(printf '%x' "$NOW")-$(openssl rand -hex 12)"
+            PARENT_ID=$(openssl rand -hex 8)
+            SEGMENTS+=("$(jq -nc --arg name "e2e-parent-$RUN_ID" --arg id "$PARENT_ID" --arg trace "$TRACE_ID" --arg run "$RUN_ID" --argjson start "$((NOW - 1))" --argjson end "$NOW" \
+              '{name: $name, id: $id, trace_id: $trace, start_time: $start, end_time: $end, annotations: {run_id: $run}}')")
+            SEGMENTS+=("$(jq -nc --arg name "e2e-child-$RUN_ID" --arg id "$(openssl rand -hex 8)" --arg parent "$PARENT_ID" --arg trace "$TRACE_ID" --arg run "$RUN_ID" --argjson start "$((NOW - 1))" --argjson end "$NOW" \
+              '{name: $name, id: $id, parent_id: $parent, trace_id: $trace, start_time: ($start + 0.2), end_time: ($end - 0.2), annotations: {run_id: $run}}')")
+            # The X-Ray trace id 1-<8 hex epoch>-<24 hex> is stored as the 32-hex OpenTelemetry id.
+            TRACE_HEXES="$TRACE_HEXES$(cut -d- -f2,3 <<<"$TRACE_ID" | tr -d -)"$'\n'
+          done
+          aws xray put-trace-segments --trace-segment-documents "${SEGMENTS[@]}" --query 'UnprocessedTraceSegments' --output json | jq -e 'length == 0' >/dev/null
+          echo "TRACE_HEX=$(sort <<<"$TRACE_HEXES" | grep . | tr '\n' ' ' | sed 's/ $//')" >> "$GITHUB_ENV"
           # A management event that happens after the trail exists and names this run.
           aws logs put-retention-policy --log-group-name "$LOG_GROUP" --retention-in-days 1
-          echo "20 log events into each of $LOG_GROUP and $STATIC_LOG_GROUP, 3 datapoints of E2eTest/AwsStack RunMarker, trace $TRACE_ID, PutRetentionPolicy on $LOG_GROUP"
+          echo "$LOG_EVENTS log events into each of $LOG_GROUP and $STATIC_LOG_GROUP, 3 datapoints of E2eTest/AwsStack RunMarker and $METRIC_SERIES series of RunLoad, $TRACES traces, PutRetentionPolicy on $LOG_GROUP"
 
       - name: "[Test] Read everything back through the SQL API connection"
         run: |
@@ -283,10 +344,10 @@ jobs:
                 echo
                 echo "Read back through \`$CONNECT_HOST\`:"
                 echo
-                echo "- logs of \`$LOG_GROUP\`: $LOGS of 20"
-                echo "- logs of \`$STATIC_LOG_GROUP\`: $STATIC_LOGS of 20"
-                echo "- spans: $SPANS of 2"
-                echo "- metric points: $METRICS of 15"
+                echo "- logs of \`$LOG_GROUP\`: $LOGS of $LOG_EVENTS"
+                echo "- logs of \`$STATIC_LOG_GROUP\`: $STATIC_LOGS of $LOG_EVENTS"
+                echo "- spans: $SPANS of $SPANS_EXPECTED"
+                echo "- metric points: $METRICS of 15, RunLoad points: $LOAD of $LOAD_EXPECTED"
                 echo "- CloudTrail event: $CLOUDTRAIL of 1"
               fi
               [ ! -f out/forwarding.md ] || { echo; cat out/forwarding.md; }
@@ -305,6 +366,10 @@ jobs:
           count() { ROWS=$(sql "SELECT count() AS n FROM $1") || return 1; [ -n "$ROWS" ] && jq -r '.n' <<<"$ROWS" || echo 0; }
           METRIC=e2e_test.aws_stack.run_marker
           METRIC_FILTER="tags['run_id'] = '$RUN_ID' AND startsWith(name, '$METRIC')"
+          LOAD_FILTER="tags['run_id'] = '$RUN_ID' AND startsWith(name, 'e2e_test.aws_stack.run_load')"
+          SPANS_EXPECTED=$((TRACES * 2))
+          # Every series makes the metric plus _max, _min, _sum and _count in each of the three minutes.
+          LOAD_EXPECTED=$((METRIC_SERIES * 15))
           counts() {
             LOGS=$(count "remote(${COLLECTION}_logs) WHERE $SINCE AND position(raw, '$MARKER') > 0 AND position(raw, '\"log_group\":\"$LOG_GROUP\"') > 0")
             STATIC_LOGS=$(count "remote(${COLLECTION}_logs) WHERE $SINCE AND position(raw, '$MARKER') > 0 AND position(raw, '\"log_group\":\"$STATIC_LOG_GROUP\"') > 0")
@@ -316,7 +381,8 @@ jobs:
             # The metric stream sends one aggregate per minute; the mapper stores it as the metric plus _max, _min, _sum and
             # _count, so three minutes make 15 points.
             METRICS=$(count "(SELECT name, dt FROM remote(${COLLECTION}_metrics) WHERE $SINCE AND $METRIC_FILTER GROUP BY name, dt)")
-            echo "logs $LOGS/20 + static $STATIC_LOGS/20, spans $SPANS/2, metric points $METRICS/15, CloudTrail event $CLOUDTRAIL/1"
+            LOAD=$(count "(SELECT name, dt, tags FROM remote(${COLLECTION}_metrics) WHERE $SINCE AND $LOAD_FILTER GROUP BY name, dt, tags)")
+            echo "logs $LOGS/$LOG_EVENTS + static $STATIC_LOGS/$LOG_EVENTS, spans $SPANS/$SPANS_EXPECTED, metric points $METRICS/15 + RunLoad $LOAD/$LOAD_EXPECTED, CloudTrail event $CLOUDTRAIL/1"
           }
           # What CloudWatch Logs did with each group in the last 40 min; DeliveryErrors mean the filter paused for 10 min
           # and skipped what arrived meanwhile.
@@ -339,9 +405,9 @@ jobs:
           # at all, so only the run's own log group and the metric are waited for (see the step measuring that hour).
           # Otherwise everything is: CloudTrail hands events to CloudWatch Logs within about 5 min of the call.
           if [ -n "${RECENT_STACK_MIN:-}" ]; then
-            arrived() { [ "$LOGS" -ge 20 ] && [ "$METRICS" -ge 15 ]; }
+            arrived() { [ "$LOGS" -ge "$LOG_EVENTS" ] && [ "$METRICS" -ge 15 ] && [ "$LOAD" -ge "$LOAD_EXPECTED" ]; }
           else
-            arrived() { [ "$LOGS" -ge 20 ] && [ "$STATIC_LOGS" -ge 20 ] && [ "$SPANS" -ge 2 ] && [ "$METRICS" -ge 15 ] && [ "$CLOUDTRAIL" -ge 1 ]; }
+            arrived() { [ "$LOGS" -ge "$LOG_EVENTS" ] && [ "$STATIC_LOGS" -ge "$LOG_EVENTS" ] && [ "$SPANS" -ge "$SPANS_EXPECTED" ] && [ "$METRICS" -ge 15 ] && [ "$LOAD" -ge "$LOAD_EXPECTED" ] && [ "$CLOUDTRAIL" -ge 1 ]; }
           fi
           DEADLINE=$((SECONDS + 1200))
           while :; do
@@ -355,11 +421,11 @@ jobs:
           sleep 60
           counts
           MISSING=()
-          for check in "logs:$LOGS:20" "static:$STATIC_LOGS:20" "spans:$SPANS:2" "cloudtrail:$CLOUDTRAIL:1"; do
+          for check in "logs:$LOGS:$LOG_EVENTS" "static:$STATIC_LOGS:$LOG_EVENTS" "spans:$SPANS:$SPANS_EXPECTED" "load:$LOAD:$LOAD_EXPECTED" "cloudtrail:$CLOUDTRAIL:1"; do
             IFS=: read -r name got want <<<"$check"
             [ "$got" = "$want" ] && continue
-            if [ -n "${RECENT_STACK_MIN:-}" ] && [ "$name" != logs ] && [ "$got" = 0 ]; then MISSING+=("$name"); continue; fi
-            fail "Unexpected row counts: logs $LOGS (20), static $STATIC_LOGS (20), spans $SPANS (2), CloudTrail event $CLOUDTRAIL (1)"
+            if [ -n "${RECENT_STACK_MIN:-}" ] && [ "$name" != logs ] && [ "$name" != load ] && [ "$got" = 0 ]; then MISSING+=("$name"); continue; fi
+            fail "Unexpected row counts: logs $LOGS ($LOG_EVENTS), static $STATIC_LOGS ($LOG_EVENTS), spans $SPANS ($SPANS_EXPECTED), RunLoad points $LOAD ($LOAD_EXPECTED), CloudTrail event $CLOUDTRAIL (1)"
           done
           # Each minute must hold exactly the value sent in it: 1, 2 and 3 for the metric, _max, _min and _sum, 1 for _count.
           # The lowest and highest stored value per point catch a re-sent minute with a different value. Points are
@@ -377,11 +443,11 @@ jobs:
             forwarding
           fi
           sql "SELECT dt, raw FROM remote(${COLLECTION}_logs) WHERE $SINCE AND position(raw, '$MARKER') > 0 ORDER BY dt LIMIT 1" > out/sample_log.json
-          if [ "$SPANS" = 2 ]; then
+          if [ "$SPANS" = "$SPANS_EXPECTED" ]; then
             sql "SELECT dt, raw FROM remote(${COLLECTION}_spans) WHERE $SINCE AND JSONExtractString(raw, 'span', 'name') IN ('e2e-parent-$RUN_ID', 'e2e-child-$RUN_ID') ORDER BY JSONExtractUInt(raw, 'span', 'start_time_unix_nano')" > out/sample_spans.json
-            # The X-Ray trace id 1-<epoch>-<random> should be stored as the 32-hex id the mapper takes from Transaction Search.
-            STORED_TRACE_IDS=$(jq -r '.raw | fromjson | .span.trace_id' out/sample_spans.json | sort -u | tr '\n' ' ')
-            [ "$STORED_TRACE_IDS" = "$TRACE_HEX " ] || fail "Stored span trace ids '$STORED_TRACE_IDS' differ from the X-Ray trace id $TRACE_HEX"
+            # The X-Ray trace ids 1-<epoch>-<random> should be stored as the 32-hex ids the mapper takes from Transaction Search.
+            STORED_TRACE_IDS=$(jq -r '.raw | fromjson | .span.trace_id' out/sample_spans.json | sort -u | tr '\n' ' ' | sed 's/ $//')
+            [ "$STORED_TRACE_IDS" = "$TRACE_HEX" ] || fail "Stored span trace ids '$STORED_TRACE_IDS' differ from the X-Ray trace ids $TRACE_HEX"
           fi
           sql "SELECT name, dt, tags, avgMerge(value_avg) AS value FROM remote(${COLLECTION}_metrics) WHERE $SINCE AND tags['run_id'] = '$RUN_ID' AND name = '$METRIC' GROUP BY name, dt, tags ORDER BY dt" > out/sample_metric.json
           [ "$CLOUDTRAIL" = 0 ] || sql "SELECT dt, raw FROM remote(${COLLECTION}_logs) WHERE $SINCE AND JSONExtractString(raw, 'message', 'eventName') = 'PutRetentionPolicy' AND JSONExtractString(raw, 'message', 'requestParameters', 'logGroupName') = '$LOG_GROUP'" > out/sample_cloudtrail.json
@@ -390,7 +456,7 @@ jobs:
             echo
             echo "- template from $TEMPLATE_FROM, source $SOURCE_ID on \`$DATA_REGION\`, stack \`$STACK_NAME\`"
             echo "- \`$LOG_GROUP\` and \`$STATIC_LOG_GROUP\` auto-subscribed, \`aws/spans\` and \`/aws/cloudtrail/better-stack\` subscribed by default, all by the first sync"
-            echo "- read back through \`$CONNECT_HOST\`: logs $LOGS + static $STATIC_LOGS, spans $SPANS, metric points $METRICS with the values sent, CloudTrail event $CLOUDTRAIL"
+            echo "- read back through \`$CONNECT_HOST\`: logs $LOGS + static $STATIC_LOGS, spans $SPANS, metric points $METRICS with the values sent + RunLoad $LOAD, CloudTrail event $CLOUDTRAIL"
             echo
             if [ "${#MISSING[@]}" -gt 0 ]; then
               echo "⚠️ $WARNING"
@@ -402,6 +468,16 @@ jobs:
               echo "✅ logs, metrics, spans and CloudTrail events round-tripped through the stack"
             fi
           } > out/summary.md
+
+      # What the tag enrichment Lambdas cost: every invocation's REPORT line (duration, memory, the cold start's init).
+      - name: "[Report] Lambda invocation reports"
+        if: ${{ always() }}
+        run: |
+          for fn in better-stack-logs better-stack-metrics; do
+            echo "## $fn"
+            aws logs filter-log-events --log-group-name "/aws/lambda/$fn" --filter-pattern REPORT --query 'events[].message' --output text 2>/dev/null \
+              | tr '\t' '\n' | sed -E 's/^REPORT RequestId: [0-9a-f-]+[[:space:]]*//'
+          done
 
       - name: "[Cleanup] Delete this run's resources in Better Stack and AWS"
         if: ${{ always() }}
