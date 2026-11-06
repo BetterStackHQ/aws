@@ -81,10 +81,12 @@ impl MetricsApi for Clients {
     async fn describe_instances(&self, id: Option<&str>) -> Result<Vec<(String, Fields)>, Error> {
         let request = match id {
             Some(id) => self.ec2.describe_instances().instance_ids(id),
-            None => self
-                .ec2
-                .describe_instances()
-                .filters(Filter::builder().name("instance-state-name").values("running").build()),
+            None => self.ec2.describe_instances().filters(
+                Filter::builder()
+                    .name("instance-state-name")
+                    .values("running")
+                    .build(),
+            ),
         };
         let mut pages = request.into_paginator().send();
         let mut instances = Vec::new();
@@ -120,7 +122,10 @@ impl MetricsApi for Clients {
         Ok(volumes)
     }
 
-    async fn describe_db_instances(&self, id: Option<&str>) -> Result<Vec<(String, Fields)>, Error> {
+    async fn describe_db_instances(
+        &self,
+        id: Option<&str>,
+    ) -> Result<Vec<(String, Fields)>, Error> {
         let mut pages = self
             .rds
             .describe_db_instances()
@@ -176,15 +181,24 @@ fn text(value: Option<&str>) -> Value {
 }
 
 pub fn ec2_instance_properties(instance: &Instance) -> Fields {
-    let instance_type = instance.instance_type().map(|t| t.as_str()).filter(|t| !t.is_empty());
+    let instance_type = instance
+        .instance_type()
+        .map(|t| t.as_str())
+        .filter(|t| !t.is_empty());
     properties([
         ("InstanceType", text(instance_type)),
-        ("InstanceFamily", text(instance_type.and_then(|t| t.split('.').next()))),
+        (
+            "InstanceFamily",
+            text(instance_type.and_then(|t| t.split('.').next())),
+        ),
         (
             "InstanceSize",
             text(instance_type.and_then(|t| t.split('.').next_back())),
         ),
-        ("Architecture", text(instance.architecture().map(|a| a.as_str()))),
+        (
+            "Architecture",
+            text(instance.architecture().map(|a| a.as_str())),
+        ),
         (
             "AvailabilityZone",
             text(instance.placement().and_then(|p| p.availability_zone())),
@@ -193,7 +207,11 @@ pub fn ec2_instance_properties(instance: &Instance) -> Fields {
         ("ImageId", text(instance.image_id())),
         (
             "InstanceLifecycle",
-            Value::from(instance.instance_lifecycle().map_or("on-demand", |l| l.as_str())),
+            Value::from(
+                instance
+                    .instance_lifecycle()
+                    .map_or("on-demand", |l| l.as_str()),
+            ),
         ),
     ])
 }
@@ -230,13 +248,18 @@ pub fn lambda_function_properties(function: &FunctionConfiguration) -> Fields {
             "Architecture",
             text(function.architectures().first().map(|a| a.as_str())),
         ),
-        ("PackageType", text(function.package_type().map(|p| p.as_str()))),
+        (
+            "PackageType",
+            text(function.package_type().map(|p| p.as_str())),
+        ),
     ])
 }
 
 #[cfg(test)]
 mod tests {
-    use aws_sdk_ec2::types::{ArchitectureValues, InstanceLifecycleType, InstanceType, Placement, VolumeType};
+    use aws_sdk_ec2::types::{
+        ArchitectureValues, InstanceLifecycleType, InstanceType, Placement, VolumeType,
+    };
     use aws_sdk_lambda::types::{Architecture, PackageType, Runtime};
 
     use super::*;
@@ -268,7 +291,10 @@ mod tests {
             .instance_lifecycle(InstanceLifecycleType::Spot)
             .build();
 
-        assert_eq!(ec2_instance_properties(&instance)["InstanceLifecycle"], "spot");
+        assert_eq!(
+            ec2_instance_properties(&instance)["InstanceLifecycle"],
+            "spot"
+        );
     }
 
     #[test]

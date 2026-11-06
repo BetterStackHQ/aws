@@ -23,35 +23,10 @@ jobs:
           key: cargo-test-${{ hashFiles('lambda/Cargo.lock') }}
 
       - name: Run tests
-        run: cargo test
+        run: cargo test --locked
 
       - name: Lint
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --all-targets --locked -- -D warnings
 
       - name: Check formatting
         run: cargo fmt --check
-
-      - name: Hand over Cargo.lock
-        uses: actions/upload-artifact@v7
-        with:
-          name: cargo-lock
-          path: lambda/Cargo.lock
-
-  # The zips to upload to every better-stack-lambda-<region> bucket under rust/, kept as an artifact
-  build:
-    runs-on: ubuntu-24.04-arm
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/cache@v6
-        with:
-          path: lambda/.cache
-          key: lambda-build-${{ hashFiles('lambda/Cargo.lock') }}
-
-      - name: Build the Lambda zips
-        run: lambda/build.sh
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: lambda-zips
-          path: lambda/dist/*.zip

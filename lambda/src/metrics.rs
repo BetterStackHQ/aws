@@ -23,9 +23,14 @@ const ERROR_TTL: Duration = Duration::from_secs(60);
 /// Each call returns `(resource id, properties)` pairs. `id: None` lists every running instance,
 /// in-use volume or DB instance; `Some` looks up that one resource.
 pub trait MetricsApi: TagApi {
-    fn describe_instances(&self, id: Option<&str>)
-    -> impl Future<Output = Result<Vec<(String, Fields)>, Error>> + Send;
-    fn describe_volumes(&self, id: Option<&str>) -> impl Future<Output = Result<Vec<(String, Fields)>, Error>> + Send;
+    fn describe_instances(
+        &self,
+        id: Option<&str>,
+    ) -> impl Future<Output = Result<Vec<(String, Fields)>, Error>> + Send;
+    fn describe_volumes(
+        &self,
+        id: Option<&str>,
+    ) -> impl Future<Output = Result<Vec<(String, Fields)>, Error>> + Send;
     fn describe_db_instances(
         &self,
         id: Option<&str>,
@@ -79,14 +84,20 @@ impl MetricsEnrichment {
     }
 
     pub async fn handle(&mut self, api: &impl MetricsApi, event: Event) -> Response {
-        self.config.log(format!("Invoked with {} records", event.records.len()));
-        let decoded: Vec<Decoded> = event.records.into_iter().map(|record| self.decode(record)).collect();
+        self.config
+            .log(format!("Invoked with {} records", event.records.len()));
+        let decoded: Vec<Decoded> = event
+            .records
+            .into_iter()
+            .map(|record| self.decode(record))
+            .collect();
 
         let arns = unique(decoded.iter().flat_map(|d| match d {
             Decoded::Enrich { metrics, .. } => metrics.iter().map(|(_, arn)| arn.clone()).collect(),
             Decoded::Done(_) => Vec::new(),
         }));
-        self.config.log(format!("Fetching tags for {} unique ARNs", arns.len()));
+        self.config
+            .log(format!("Fetching tags for {} unique ARNs", arns.len()));
         self.tags.prefetch(api, &arns, &self.config).await;
 
         let mut records = Vec::with_capacity(decoded.len());
@@ -144,15 +155,31 @@ impl MetricsEnrichment {
     }
 
     /// Adds `tags` with the common ones as top-level fields, and the resource's `properties`.
-    pub async fn enrich_record(&mut self, api: &impl MetricsApi, metric: &mut Fields, arn: Option<&str>) {
+    pub async fn enrich_record(
+        &mut self,
+        api: &impl MetricsApi,
+        metric: &mut Fields,
+        arn: Option<&str>,
+    ) {
         add_tags(metric, self.tags.get(arn));
-        if let Some(properties) = self.properties_for_metric(api, metric).await.filter(|p| !p.is_empty()) {
+        if let Some(properties) = self
+            .properties_for_metric(api, metric)
+            .await
+            .filter(|p| !p.is_empty())
+        {
             metric.insert("properties".to_string(), Value::Object(properties));
         }
     }
 
-    pub async fn properties_for_metric(&mut self, api: &impl MetricsApi, metric: &Fields) -> Option<Fields> {
-        let namespace = metric.get("namespace").and_then(Value::as_str).unwrap_or("");
+    pub async fn properties_for_metric(
+        &mut self,
+        api: &impl MetricsApi,
+        metric: &Fields,
+    ) -> Option<Fields> {
+        let namespace = metric
+            .get("namespace")
+            .and_then(Value::as_str)
+            .unwrap_or("");
         let dimension = |name: &str| {
             metric
                 .get("dimensions")
@@ -195,7 +222,12 @@ impl MetricsEnrichment {
             return;
         }
         self.config.log("Loading EC2 instances and EBS volumes");
-        let listed = async { Ok::<_, Error>((api.describe_instances(None).await?, api.describe_volumes(None).await?)) };
+        let listed = async {
+            Ok::<_, Error>((
+                api.describe_instances(None).await?,
+                api.describe_volumes(None).await?,
+            ))
+        };
         match listed.await {
             Ok((instances, volumes)) => {
                 self.config.log(format!(
@@ -208,7 +240,8 @@ impl MetricsEnrichment {
                 self.instances.expires = Some(Instant::now() + self.config.cache_ttl);
             }
             Err(e) => {
-                self.config.log(format!("Error loading EC2 properties: {e}"));
+                self.config
+                    .log(format!("Error loading EC2 properties: {e}"));
                 self.instances.expires = Some(Instant::now() + ERROR_TTL);
             }
         }
@@ -228,17 +261,29 @@ impl MetricsEnrichment {
 
     pub async fn load_functions(&mut self, api: &impl MetricsApi) {
         let config = self.config.clone();
-        load(&mut self.functions, &config, "Lambda functions", api.list_functions()).await;
+        load(
+            &mut self.functions,
+            &config,
+            "Lambda functions",
+            api.list_functions(),
+        )
+        .await;
     }
 
     pub async fn backfill_instance(&mut self, api: &impl MetricsApi, id: &str) {
         let config = self.config.clone();
-        backfill(&mut self.instances, &config, id, |id| api.describe_instances(Some(id))).await;
+        backfill(&mut self.instances, &config, id, |id| {
+            api.describe_instances(Some(id))
+        })
+        .await;
     }
 
     pub async fn backfill_volume(&mut self, api: &impl MetricsApi, id: &str) {
         let config = self.config.clone();
-        backfill(&mut self.volumes, &config, id, |id| api.describe_volumes(Some(id))).await;
+        backfill(&mut self.volumes, &config, id, |id| {
+            api.describe_volumes(Some(id))
+        })
+        .await;
     }
 
     pub async fn backfill_db_instance(&mut self, api: &impl MetricsApi, id: &str) {
@@ -304,30 +349,43 @@ where
 
 /// The ARN of the resource a metric measures, from the dimension its namespace uses.
 pub fn extract_resource_arn(config: &Config, metric: &Fields) -> Option<String> {
-    let namespace = metric.get("namespace").and_then(Value::as_str).unwrap_or("");
+    let namespace = metric
+        .get("namespace")
+        .and_then(Value::as_str)
+        .unwrap_or("");
     let dimension = |name: &str| {
         metric
             .get("dimensions")
             .and_then(|d| d.get(name))
             .and_then(Value::as_str)
     };
-    let Config { region, account_id, .. } = config;
+    let Config {
+        region, account_id, ..
+    } = config;
     let arn = match namespace {
-        "AWS/EC2" => dimension("InstanceId").map(|id| format!("arn:aws:ec2:{region}:{account_id}:instance/{id}")),
-        "AWS/RDS" => dimension("DBInstanceIdentifier").map(|id| format!("arn:aws:rds:{region}:{account_id}:db:{id}")),
-        "AWS/Lambda" => {
-            dimension("FunctionName").map(|name| format!("arn:aws:lambda:{region}:{account_id}:function:{name}"))
+        "AWS/EC2" => dimension("InstanceId")
+            .map(|id| format!("arn:aws:ec2:{region}:{account_id}:instance/{id}")),
+        "AWS/RDS" => dimension("DBInstanceIdentifier")
+            .map(|id| format!("arn:aws:rds:{region}:{account_id}:db:{id}")),
+        "AWS/Lambda" => dimension("FunctionName")
+            .map(|name| format!("arn:aws:lambda:{region}:{account_id}:function:{name}")),
+        "AWS/DynamoDB" => dimension("TableName")
+            .map(|name| format!("arn:aws:dynamodb:{region}:{account_id}:table/{name}")),
+        "AWS/SQS" => {
+            dimension("QueueName").map(|name| format!("arn:aws:sqs:{region}:{account_id}:{name}"))
         }
-        "AWS/DynamoDB" => {
-            dimension("TableName").map(|name| format!("arn:aws:dynamodb:{region}:{account_id}:table/{name}"))
+        "AWS/SNS" => {
+            dimension("TopicName").map(|name| format!("arn:aws:sns:{region}:{account_id}:{name}"))
         }
-        "AWS/SQS" => dimension("QueueName").map(|name| format!("arn:aws:sqs:{region}:{account_id}:{name}")),
-        "AWS/SNS" => dimension("TopicName").map(|name| format!("arn:aws:sns:{region}:{account_id}:{name}")),
         "AWS/S3" => dimension("BucketName").map(|name| format!("arn:aws:s3:::{name}")),
-        "AWS/EBS" => dimension("VolumeId").map(|id| format!("arn:aws:ec2:{region}:{account_id}:volume/{id}")),
+        "AWS/EBS" => {
+            dimension("VolumeId").map(|id| format!("arn:aws:ec2:{region}:{account_id}:volume/{id}"))
+        }
         "AWS/ELB" | "AWS/ApplicationELB" | "AWS/NetworkELB" => dimension("LoadBalancer")
             .or_else(|| dimension("LoadBalancerName"))
-            .map(|name| format!("arn:aws:elasticloadbalancing:{region}:{account_id}:loadbalancer/{name}")),
+            .map(|name| {
+                format!("arn:aws:elasticloadbalancing:{region}:{account_id}:loadbalancer/{name}")
+            }),
         _ => None,
     };
     if arn.is_none() {
@@ -350,7 +408,10 @@ mod tests {
 
     fn fresh(items: &[(&str, Fields)]) -> PropertyCache {
         PropertyCache {
-            items: items.iter().map(|(id, p)| (id.to_string(), p.clone())).collect(),
+            items: items
+                .iter()
+                .map(|(id, p)| (id.to_string(), p.clone()))
+                .collect(),
             loaded: true,
             expires: Some(Instant::now() + Duration::from_secs(600)),
         }
@@ -368,7 +429,10 @@ mod tests {
         );
         api.volumes(
             None,
-            vec![("vol-1234567890abcdef0".to_string(), fields(&[("VolumeType", "gp3")]))],
+            vec![(
+                "vol-1234567890abcdef0".to_string(),
+                fields(&[("VolumeType", "gp3")]),
+            )],
         );
         let mut enrichment = MetricsEnrichment::new(test_config());
 
@@ -417,7 +481,10 @@ mod tests {
         let api = FakeApi::default();
         api.instances(
             Some("i-newinstance"),
-            vec![("i-newinstance".to_string(), fields(&[("InstanceType", "t3.small")]))],
+            vec![(
+                "i-newinstance".to_string(),
+                fields(&[("InstanceType", "t3.small")]),
+            )],
         );
         let mut enrichment = MetricsEnrichment::new(test_config());
         enrichment.instances = fresh(&[]);
@@ -479,7 +546,9 @@ mod tests {
         let properties = enrichment
             .properties_for_metric(
                 &api,
-                &metric(json!({ "namespace": "AWS/EC2", "dimensions": { "InstanceId": "i-test" } })),
+                &metric(
+                    json!({ "namespace": "AWS/EC2", "dimensions": { "InstanceId": "i-test" } }),
+                ),
             )
             .await;
 
@@ -492,7 +561,10 @@ mod tests {
         let mut enrichment = MetricsEnrichment::new(test_config());
 
         let properties = enrichment
-            .properties_for_metric(&api, &metric(json!({ "namespace": "AWS/Unknown", "dimensions": {} })))
+            .properties_for_metric(
+                &api,
+                &metric(json!({ "namespace": "AWS/Unknown", "dimensions": {} })),
+            )
             .await;
 
         assert_eq!(properties, None);
@@ -557,7 +629,8 @@ mod tests {
             Some("arn:aws:lambda:us-east-1:123456789012:function:my-function")
         );
         assert_eq!(
-            arn_of(json!({ "namespace": "AWS/S3", "dimensions": { "BucketName": "my-bucket" } })).as_deref(),
+            arn_of(json!({ "namespace": "AWS/S3", "dimensions": { "BucketName": "my-bucket" } }))
+                .as_deref(),
             Some("arn:aws:s3:::my-bucket")
         );
         assert_eq!(
@@ -571,13 +644,19 @@ mod tests {
 
     #[test]
     fn returns_none_for_missing_dimensions() {
-        assert_eq!(arn_of(json!({ "namespace": "AWS/EC2", "dimensions": {} })), None);
+        assert_eq!(
+            arn_of(json!({ "namespace": "AWS/EC2", "dimensions": {} })),
+            None
+        );
     }
 
     #[tokio::test]
     async fn enriches_every_line_and_passes_undecodable_records_through() {
         let api = FakeApi::default();
-        api.tags("arn:aws:sqs:us-east-1:123456789012:jobs", &[("Team", "payments")]);
+        api.tags(
+            "arn:aws:sqs:us-east-1:123456789012:jobs",
+            &[("Team", "payments")],
+        );
         let mut enrichment = MetricsEnrichment::new(test_config());
         let lines = concat!(
             r#"{"namespace":"AWS/SQS","metric_name":"NumberOfMessagesSent","dimensions":{"QueueName":"jobs"},"value":{"max":1.0}}"#,

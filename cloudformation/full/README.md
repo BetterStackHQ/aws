@@ -72,7 +72,6 @@ aws cloudformation deploy \
 |-----------|---------|-------------|
 | `CreateGlobalResources` | `true` | Create IAM roles. Set to `false` for secondary regions. |
 | `FirehoseRetryDurationSeconds` | `3600` | How long (seconds) Firehose retries delivery before writing failed records to the S3 backup bucket. Max `7200`; `0` disables retries. |
-| `LambdaCodeBucket` | (empty) | S3 bucket holding the tag-enrichment Lambda code under `rust/`. Leave empty to use `better-stack-lambda-{region}`; the E2E workflow sets it to test unreleased code. |
 
 ### Feature Toggles
 

@@ -14,7 +14,8 @@ pub struct Config {
 
 impl Config {
     pub fn from_env(log_prefix: &'static str) -> Self {
-        let var = |name: &str, default: &str| std::env::var(name).unwrap_or_else(|_| default.to_string());
+        let var =
+            |name: &str, default: &str| std::env::var(name).unwrap_or_else(|_| default.to_string());
         let minutes: u64 = var("CACHE_TTL_MINUTES", "10")
             .parse()
             .expect("CACHE_TTL_MINUTES must be a whole number of minutes");

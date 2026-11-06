@@ -58,14 +58,20 @@ impl LogsEnrichment {
     }
 
     pub async fn handle(&mut self, api: &impl TagApi, event: Event) -> Response {
-        self.config.log(format!("Invoked with {} records", event.records.len()));
-        let decoded: Vec<Decoded> = event.records.into_iter().map(|record| self.decode(record)).collect();
+        self.config
+            .log(format!("Invoked with {} records", event.records.len()));
+        let decoded: Vec<Decoded> = event
+            .records
+            .into_iter()
+            .map(|record| self.decode(record))
+            .collect();
 
         let arns = unique(decoded.iter().map(|d| match d {
             Decoded::Enrich { arn, .. } => arn.clone(),
             Decoded::Done(_) => None,
         }));
-        self.config.log(format!("Fetching tags for {} unique ARNs", arns.len()));
+        self.config
+            .log(format!("Fetching tags for {} unique ARNs", arns.len()));
         self.tags.prefetch(api, &arns, &self.config).await;
 
         let records = decoded
@@ -107,7 +113,11 @@ impl LogsEnrichment {
             return Decoded::Done(OutputRecord::dropped(&record));
         }
         let arn = extract_resource_arn(&self.config, &payload);
-        Decoded::Enrich { record, payload, arn }
+        Decoded::Enrich {
+            record,
+            payload,
+            arn,
+        }
     }
 }
 
@@ -132,9 +142,17 @@ pub fn gzip_compress(data: &[u8]) -> std::io::Result<Vec<u8>> {
 }
 
 pub fn extract_resource_arn(config: &Config, payload: &Fields) -> Option<String> {
-    let log_group = payload.get("logGroup").and_then(Value::as_str).unwrap_or("");
-    let log_stream = payload.get("logStream").and_then(Value::as_str).unwrap_or("");
-    let Config { region, account_id, .. } = config;
+    let log_group = payload
+        .get("logGroup")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let log_stream = payload
+        .get("logStream")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let Config {
+        region, account_id, ..
+    } = config;
 
     // RDS Enhanced Monitoring has the DB identifier inside the message body
     if log_group == "RDSOSMetrics" {
@@ -151,16 +169,29 @@ pub fn extract_resource_arn(config: &Config, payload: &Fields) -> Option<String>
         ));
     }
     if let Some(function_name) = log_group.strip_prefix("/aws/lambda/") {
-        return Some(format!("arn:aws:lambda:{region}:{account_id}:function:{function_name}"));
+        return Some(format!(
+            "arn:aws:lambda:{region}:{account_id}:function:{function_name}"
+        ));
     }
-    if let Some(db_instance) = log_group.strip_prefix("/aws/rds/instance/").and_then(first_segment) {
-        return Some(format!("arn:aws:rds:{region}:{account_id}:db:{db_instance}"));
+    if let Some(db_instance) = log_group
+        .strip_prefix("/aws/rds/instance/")
+        .and_then(first_segment)
+    {
+        return Some(format!(
+            "arn:aws:rds:{region}:{account_id}:db:{db_instance}"
+        ));
     }
     if let Some(cluster) = log_group.strip_prefix("/ecs/").and_then(first_segment) {
-        return Some(format!("arn:aws:ecs:{region}:{account_id}:cluster/{cluster}"));
+        return Some(format!(
+            "arn:aws:ecs:{region}:{account_id}:cluster/{cluster}"
+        ));
     }
     if log_group.starts_with("/aws/api-gateway/") || log_group.starts_with("/aws/http-api/") {
-        let api_id = log_group.trim_end_matches('/').rsplit('/').next().unwrap_or("");
+        let api_id = log_group
+            .trim_end_matches('/')
+            .rsplit('/')
+            .next()
+            .unwrap_or("");
         return Some(format!("arn:aws:apigateway:{region}::/restapis/{api_id}"));
     }
     config.log(format!(
@@ -215,7 +246,8 @@ mod tests {
     #[test]
     fn extracts_instance_id_from_log_stream() {
         assert_eq!(
-            arn_of(json!({ "logGroup": "/ec2/syslog", "logStream": "i-1234567890abcdef0" })).as_deref(),
+            arn_of(json!({ "logGroup": "/ec2/syslog", "logStream": "i-1234567890abcdef0" }))
+                .as_deref(),
             Some("arn:aws:ec2:us-east-1:123456789012:instance/i-1234567890abcdef0")
         );
     }
@@ -223,7 +255,10 @@ mod tests {
     #[test]
     fn extracts_instance_id_from_log_group() {
         assert_eq!(
-            arn_of(json!({ "logGroup": "/ec2/i-abcdef1234567890/syslog", "logStream": "some-stream" })).as_deref(),
+            arn_of(
+                json!({ "logGroup": "/ec2/i-abcdef1234567890/syslog", "logStream": "some-stream" })
+            )
+            .as_deref(),
             Some("arn:aws:ec2:us-east-1:123456789012:instance/i-abcdef1234567890")
         );
     }
@@ -269,7 +304,8 @@ mod tests {
     #[test]
     fn extracts_api_gateway_from_log_group() {
         assert_eq!(
-            arn_of(json!({ "logGroup": "/aws/api-gateway/abc123xyz", "logStream": "some-stream" })).as_deref(),
+            arn_of(json!({ "logGroup": "/aws/api-gateway/abc123xyz", "logStream": "some-stream" }))
+                .as_deref(),
             Some("arn:aws:apigateway:us-east-1::/restapis/abc123xyz")
         );
     }
@@ -310,7 +346,9 @@ mod tests {
     #[test]
     fn returns_none_without_enhanced_monitoring_events() {
         assert_eq!(
-            arn_of(json!({ "logGroup": "RDSOSMetrics", "logStream": "db-ABC123", "logEvents": [] })),
+            arn_of(
+                json!({ "logGroup": "RDSOSMetrics", "logStream": "db-ABC123", "logEvents": [] })
+            ),
             None
         );
     }
@@ -346,7 +384,11 @@ mod tests {
         let api = FakeApi::default();
         api.tags(
             "arn:aws:ec2:us-east-1:123456789012:instance/i-0123456789abcdef0",
-            &[("Name", "web-1"), ("Environment", "production"), ("Team", "platform")],
+            &[
+                ("Name", "web-1"),
+                ("Environment", "production"),
+                ("Team", "platform"),
+            ],
         );
         let mut enrichment = LogsEnrichment::new(test_config());
         let not_gzip = InputRecord {
@@ -378,7 +420,10 @@ mod tests {
             .iter()
             .map(|r| (r.record_id.as_str(), r.result))
             .collect();
-        assert_eq!(results, [("1", "Ok"), ("2", "Dropped"), ("3", "Ok"), ("4", "Ok")]);
+        assert_eq!(
+            results,
+            [("1", "Ok"), ("2", "Dropped"), ("3", "Ok"), ("4", "Ok")]
+        );
         assert_eq!(
             decoded(&response.records[0]),
             r#"{"messageType":"DATA_MESSAGE","logGroup":"/ec2/syslog","logStream":"i-0123456789abcdef0","logEvents":[{"id":"a","timestamp":1,"message":"hello"}],"tags":{"Name":"web-1","Environment":"production","Team":"platform"},"resource_name":"web-1","environment":"production","team":"platform"}"#

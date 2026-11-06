@@ -17,7 +17,10 @@ const ERROR_TTL: Duration = Duration::from_secs(60);
 
 pub trait TagApi {
     /// The tags of each ARN that exists and has tags. Others are left out.
-    fn get_resources(&self, arns: &[String]) -> impl Future<Output = Result<Vec<(String, Fields)>, Error>> + Send;
+    fn get_resources(
+        &self,
+        arns: &[String],
+    ) -> impl Future<Output = Result<Vec<(String, Fields)>, Error>> + Send;
 }
 
 pub struct TagCache {
@@ -41,7 +44,11 @@ impl TagCache {
         let now = Instant::now();
         let to_fetch: Vec<String> = arns
             .iter()
-            .filter(|arn| self.entries.get(*arn).is_none_or(|entry| entry.expires < now))
+            .filter(|arn| {
+                self.entries
+                    .get(*arn)
+                    .is_none_or(|entry| entry.expires < now)
+            })
             .cloned()
             .collect();
         config.log(format!(
@@ -54,8 +61,12 @@ impl TagCache {
             config.log(format!("Calling GetResources for {} ARNs", batch.len()));
             match api.get_resources(batch).await {
                 Ok(resources) => {
-                    config.log(format!("GetResources returned {} resources", resources.len()));
-                    let found: HashSet<String> = resources.iter().map(|(arn, _)| arn.clone()).collect();
+                    config.log(format!(
+                        "GetResources returned {} resources",
+                        resources.len()
+                    ));
+                    let found: HashSet<String> =
+                        resources.iter().map(|(arn, _)| arn.clone()).collect();
                     for (arn, tags) in resources {
                         self.insert(arn, tags, now + config.cache_ttl);
                     }
@@ -170,7 +181,9 @@ mod tests {
 
         assert!(cache.contains("arn:aws:ec2:us-east-1:123456789012:instance/i-notfound"));
         assert_eq!(
-            cache.get(Some("arn:aws:ec2:us-east-1:123456789012:instance/i-notfound")),
+            cache.get(Some(
+                "arn:aws:ec2:us-east-1:123456789012:instance/i-notfound"
+            )),
             Fields::new()
         );
         assert_eq!(api.calls("get_resources"), 1);
@@ -256,7 +269,9 @@ mod tests {
         );
 
         assert_eq!(
-            cache.get(Some("arn:aws:ec2:us-east-1:123456789012:instance/i-expired")),
+            cache.get(Some(
+                "arn:aws:ec2:us-east-1:123456789012:instance/i-expired"
+            )),
             Fields::new()
         );
     }

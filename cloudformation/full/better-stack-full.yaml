@@ -15,7 +15,6 @@ Metadata:
         Parameters:
           - CreateGlobalResources
           - FirehoseRetryDurationSeconds
-          - LambdaCodeBucket
       - Label:
           default: Features
         Parameters:
@@ -28,8 +27,6 @@ Metadata:
         default: Firehose retry duration (seconds)
       EnableMetricStream:
         default: Stream metrics (disable to pull via the CloudWatch API instead)
-      LambdaCodeBucket:
-        default: Lambda code bucket (leave empty)
 
 Parameters:
   ClusterId:
@@ -106,20 +103,12 @@ Parameters:
     MinValue: 0
     MaxValue: 7200
 
-  LambdaCodeBucket:
-    Type: String
-    Description: >-
-      S3 bucket in this region holding the tag-enrichment Lambda code under rust/.
-      Leave empty to use Better Stack's bucket, better-stack-lambda-<region>.
-    Default: ''
-
 Conditions:
   ShouldCreateGlobalResources: !Equals [!Ref CreateGlobalResources, 'true']
   MetricStreamEnabled: !Equals [!Ref EnableMetricStream, 'true']
   TagEnrichmentEnabled: !Equals [!Ref EnableTagEnrichment, 'true']
   CloudTrailEnabled: !Equals [!Ref EnableCloudTrail, 'true']
   XRayEnabled: !Equals [!Ref EnableXRayTransactionSearch, 'true']
-  DefaultLambdaCodeBucket: !Equals [!Ref LambdaCodeBucket, '']
 
   # Compound conditions
 
@@ -725,10 +714,7 @@ Resources:
         - !GetAtt TagEnrichmentLambdaRole.Arn
         - !Sub 'arn:aws:iam::${AWS::AccountId}:role/better-stack-tag-enrichment-role'
       Code:
-        S3Bucket: !If
-          - DefaultLambdaCodeBucket
-          - !Sub 'better-stack-lambda-${AWS::Region}'
-          - !Ref LambdaCodeBucket
+        S3Bucket: !Sub 'better-stack-lambda-${AWS::Region}'
         S3Key: rust/firehose_metrics_tag_enrichment.zip
       Timeout: 120
       MemorySize: 256
@@ -761,10 +747,7 @@ Resources:
         - !GetAtt TagEnrichmentLambdaRole.Arn
         - !Sub 'arn:aws:iam::${AWS::AccountId}:role/better-stack-tag-enrichment-role'
       Code:
-        S3Bucket: !If
-          - DefaultLambdaCodeBucket
-          - !Sub 'better-stack-lambda-${AWS::Region}'
-          - !Ref LambdaCodeBucket
+        S3Bucket: !Sub 'better-stack-lambda-${AWS::Region}'
         S3Key: rust/firehose_logs_tag_enrichment.zip
       Timeout: 120
       MemorySize: 256

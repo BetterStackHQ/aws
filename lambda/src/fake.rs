@@ -10,7 +10,10 @@ use crate::tags::TagApi;
 use crate::{Error, Fields};
 
 pub fn fields(pairs: &[(&str, &str)]) -> Fields {
-    pairs.iter().map(|(k, v)| (k.to_string(), Value::from(*v))).collect()
+    pairs
+        .iter()
+        .map(|(k, v)| (k.to_string(), Value::from(*v)))
+        .collect()
 }
 
 /// Every API answers empty until a test sets a response; `fail` makes one return an error.
@@ -34,7 +37,11 @@ struct State {
 
 impl FakeApi {
     pub fn tags(&self, arn: &str, tags: &[(&str, &str)]) {
-        self.state.lock().unwrap().tags.push((arn.to_string(), fields(tags)));
+        self.state
+            .lock()
+            .unwrap()
+            .tags
+            .push((arn.to_string(), fields(tags)));
     }
 
     pub fn instances(&self, id: Option<&str>, instances: Vec<(String, Fields)>) {
@@ -46,11 +53,19 @@ impl FakeApi {
     }
 
     pub fn volumes(&self, id: Option<&str>, volumes: Vec<(String, Fields)>) {
-        self.state.lock().unwrap().volumes.insert(id.map(String::from), volumes);
+        self.state
+            .lock()
+            .unwrap()
+            .volumes
+            .insert(id.map(String::from), volumes);
     }
 
     pub fn function(&self, name: &str, properties: Fields) {
-        self.state.lock().unwrap().function.insert(name.to_string(), properties);
+        self.state
+            .lock()
+            .unwrap()
+            .function
+            .insert(name.to_string(), properties);
     }
 
     pub fn fail(&self, api: &'static str) {
@@ -58,7 +73,13 @@ impl FakeApi {
     }
 
     pub fn calls(&self, api: &'static str) -> usize {
-        self.state.lock().unwrap().calls.get(api).copied().unwrap_or(0)
+        self.state
+            .lock()
+            .unwrap()
+            .calls
+            .get(api)
+            .copied()
+            .unwrap_or(0)
     }
 
     fn call(&self, api: &'static str) -> Result<std::sync::MutexGuard<'_, State>, Error> {
@@ -86,15 +107,26 @@ impl TagApi for FakeApi {
 impl MetricsApi for FakeApi {
     async fn describe_instances(&self, id: Option<&str>) -> Result<Vec<(String, Fields)>, Error> {
         let state = self.call("describe_instances")?;
-        Ok(state.instances.get(&id.map(String::from)).cloned().unwrap_or_default())
+        Ok(state
+            .instances
+            .get(&id.map(String::from))
+            .cloned()
+            .unwrap_or_default())
     }
 
     async fn describe_volumes(&self, id: Option<&str>) -> Result<Vec<(String, Fields)>, Error> {
         let state = self.call("describe_volumes")?;
-        Ok(state.volumes.get(&id.map(String::from)).cloned().unwrap_or_default())
+        Ok(state
+            .volumes
+            .get(&id.map(String::from))
+            .cloned()
+            .unwrap_or_default())
     }
 
-    async fn describe_db_instances(&self, id: Option<&str>) -> Result<Vec<(String, Fields)>, Error> {
+    async fn describe_db_instances(
+        &self,
+        id: Option<&str>,
+    ) -> Result<Vec<(String, Fields)>, Error> {
         let state = self.call("describe_db_instances")?;
         Ok(state
             .db_instances
