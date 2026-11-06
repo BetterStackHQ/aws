@@ -1,0 +1,91 @@
+name: Release
+
+# Bumps the version, tags main and publishes the GitHub Release: the two Lambda zips, the template with the version
+# stamped in, and SHA256SUMS. Deploying the release to the S3 buckets is the deploy recipe's job.
+
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: 'Version bump'
+        required: true
+        type: choice
+        options: [patch, minor, major]
+      dry_run:
+        description: 'Build and show the version without tagging or releasing'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  AWS_REGION: us-east-1
+  AWS_ROLE_ARN: arn:aws:iam::251917137055:role/github-actions-e2e
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Releases are cut from main
+        if: ${{ github.ref != 'refs/heads/main' }}
+        run: |
+          echo "::error::run this on main, not ${{ github.ref_name }}"
+          exit 1
+
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Bump the version
+        run: |
+          LAST=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -1)
+          IFS=. read -r MAJOR MINOR PATCH <<<"${LAST#v}"
+          : "${MAJOR:=0}" "${MINOR:=0}" "${PATCH:=0}"
+          case "${{ inputs.release }}" in
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0;;
+            patch) PATCH=$((PATCH + 1));;
+          esac
+          echo "VERSION=$MAJOR.$MINOR.$PATCH" >> "$GITHUB_ENV"
+          echo "${LAST:-no release yet} -> v$MAJOR.$MINOR.$PATCH"
+
+      - name: Build the Lambda zips
+        run: lambda/build.sh
+
+      - name: Stamp the template and write the checksums
+        run: |
+          mkdir release
+          sed "s/^      Version: 0\.0\.0-dev$/      Version: $VERSION/" cloudformation/full/better-stack-full.yaml > release/better-stack-full.yaml
+          grep -q "^      Version: $VERSION$" release/better-stack-full.yaml || { echo "::error::the template has no 'Version: 0.0.0-dev' line to stamp"; exit 1; }
+          cp lambda/dist/firehose_logs_tag_enrichment.zip lambda/dist/firehose_metrics_tag_enrichment.zip release/
+          cd release
+          sha256sum firehose_logs_tag_enrichment.zip firehose_metrics_tag_enrichment.zip better-stack-full.yaml > SHA256SUMS
+          cat SHA256SUMS
+
+      - uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: The stamped template is valid CloudFormation
+        run: aws cloudformation validate-template --template-body file://release/better-stack-full.yaml >/dev/null
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ env.VERSION }}
+          path: release/
+          retention-days: 30
+
+      - name: Tag and release
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git tag "v$VERSION" "$GITHUB_SHA"
+          git push origin "v$VERSION"
+          { echo '```'; cat release/SHA256SUMS; echo '```'; } > notes.md
+          gh release create "v$VERSION" --verify-tag --title "v$VERSION" --notes-file notes.md \
+            release/firehose_logs_tag_enrichment.zip release/firehose_metrics_tag_enrichment.zip release/better-stack-full.yaml release/SHA256SUMS
+          echo "released https://github.com/${{ github.repository }}/releases/tag/v$VERSION"

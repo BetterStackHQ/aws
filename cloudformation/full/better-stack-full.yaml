@@ -103,6 +103,12 @@ Parameters:
     MinValue: 0
     MaxValue: 7200
 
+Mappings:
+  # Stamped by the Release workflow; the Lambda functions read their code from <version>/ in the regional buckets.
+  Release:
+    Current:
+      Version: 0.0.0-dev
+
 Conditions:
   ShouldCreateGlobalResources: !Equals [!Ref CreateGlobalResources, 'true']
   MetricStreamEnabled: !Equals [!Ref EnableMetricStream, 'true']
@@ -715,7 +721,7 @@ Resources:
         - !Sub 'arn:aws:iam::${AWS::AccountId}:role/better-stack-tag-enrichment-role'
       Code:
         S3Bucket: !Sub 'better-stack-lambda-${AWS::Region}'
-        S3Key: firehose_metrics_tag_enrichment.zip
+        S3Key: !Join ['/', [!FindInMap [Release, Current, Version], 'firehose_metrics_tag_enrichment.zip']]
       Timeout: 120
       MemorySize: 256
       Environment:
@@ -748,7 +754,7 @@ Resources:
         - !Sub 'arn:aws:iam::${AWS::AccountId}:role/better-stack-tag-enrichment-role'
       Code:
         S3Bucket: !Sub 'better-stack-lambda-${AWS::Region}'
-        S3Key: firehose_logs_tag_enrichment.zip
+        S3Key: !Join ['/', [!FindInMap [Release, Current, Version], 'firehose_logs_tag_enrichment.zip']]
       Timeout: 120
       MemorySize: 256
       Environment:
