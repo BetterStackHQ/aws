@@ -1,0 +1,33 @@
+[package]
+name = "tag-enrichment"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[[bin]]
+name = "firehose_logs_tag_enrichment"
+path = "src/bin/firehose_logs_tag_enrichment.rs"
+
+[[bin]]
+name = "firehose_metrics_tag_enrichment"
+path = "src/bin/firehose_metrics_tag_enrichment.rs"
+
+[dependencies]
+aws-config = { version = "1", features = ["behavior-version-latest"] }
+aws-sdk-ec2 = "1"
+aws-sdk-lambda = "1"
+aws-sdk-rds = "1"
+aws-sdk-resourcegroupstagging = "1"
+base64 = "0.22"
+flate2 = "1"
+lambda_runtime = "0.14"
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+# preserve_order keeps the keys of a record in the order they arrived, with the added ones last
+serde_json = { version = "1", features = ["preserve_order"] }
+tokio = { version = "1", features = ["macros", "rt", "sync"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

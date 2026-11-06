@@ -72,6 +72,7 @@ aws cloudformation deploy \
 |-----------|---------|-------------|
 | `CreateGlobalResources` | `true` | Create IAM roles. Set to `false` for secondary regions. |
 | `FirehoseRetryDurationSeconds` | `3600` | How long (seconds) Firehose retries delivery before writing failed records to the S3 backup bucket. Max `7200`; `0` disables retries. |
+| `LambdaCodeBucket` | (empty) | S3 bucket holding the tag-enrichment Lambda code under `rust/`. Leave empty to use `better-stack-lambda-{region}`; the E2E workflow sets it to test unreleased code. |
 
 ### Feature Toggles
 
@@ -177,7 +178,7 @@ When `EnableTagEnrichment=true`, [Lambda functions](../../lambda/README.md) enri
 - `/ecs/{cluster}/...` -> ECS tags
 - `/aws/api-gateway/{api-id}` -> API Gateway tags
 
-See the [Lambda README](../../lambda/README.md) for implementation details. Lambda code is deployed from regional S3 buckets (`better-stack-lambda-{region}`).
+See the [Lambda README](../../lambda/README.md) for implementation details. Lambda code is deployed from `rust/` in regional S3 buckets (`better-stack-lambda-{region}`).
 
 ## Stack Outputs
 
