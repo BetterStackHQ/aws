@@ -190,10 +190,6 @@ When `CreateGlobalResources=true`, the stack outputs:
 
 Better Stack will discover all other resources (Firehose streams, Metric Streams, etc.) via the STS integration role.
 
-## Releases
-
-Run the [Release workflow](../../.github/workflows/release.yml) on `main` with a patch, minor or major bump. It tags `vX.Y.Z` and publishes the GitHub Release: the two Lambda zips, the template with the version stamped into its `Release` mapping, and `SHA256SUMS`. The template's functions read their code from `X.Y.Z/<function>.zip` in `better-stack-lambda-{region}`, so updating a stack to a newer template updates its functions. The deploy recipe uploads a release to the buckets and copies the template to `better-stack-full.yaml`, the latest the product links to; the daily E2E fails when latest is not the newest release's.
-
 ## Troubleshooting
 
 ### Check Firehose Delivery Errors
