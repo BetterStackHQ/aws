@@ -5,9 +5,8 @@ name: "E2E"
 # checks that the first sync subscribes the run's log group, the static group, aws/spans and the CloudTrail group by
 # itself, then produces logs, a custom metric, an X-Ray trace and a CloudTrail management event in AWS and reads all of
 # them back through the team's SQL API connection with exact row counts. Pull requests and pushes to main deploy the
-# template from the checkout, with the Lambda zips built from the checkout uploaded to a bucket of the run's own and the
-# template stamped with the run id (see release.yml for how a release stamps a version); the daily schedule deploys the
-# published template and fails when it differs from the newest release's. Everything the run creates in AWS and Better Stack is named after
+# template from the checkout, with the Lambda zips built from it uploaded to a bucket of the run's own under the run id;
+# the daily schedule deploys the published template and fails when it differs from the newest release's. Everything the run creates in AWS and Better Stack is named after
 # RUN_ID and deleted in the cleanup step, together with leftovers of earlier runs. Within an hour of the previous run's
 # stack deletion, the static group, aws/spans and CloudTrail delivering nothing is a warning instead of a failure (see
 # the step that measures it). The docs check fails when the docs article stops naming a template toggle or output.
@@ -104,7 +103,6 @@ jobs:
           echo "TEMPLATE_FROM=$TEMPLATE_FROM ($(git rev-parse --short HEAD))" >> "$GITHUB_ENV"
           curl -sSfL "$PUBLISHED_TEMPLATE_URL" -o template-published.yaml
           echo "published template: $(grep -m1 -E '^      Version: ' template-published.yaml || echo 'no version, published before releases were tagged')"
-          # The published template must be the newest release's, byte for byte; until the first release it is main's.
           if [ "${{ github.event_name }}" = schedule ]; then
             TAG=$(gh api "repos/${{ github.repository }}/releases/latest" --jq .tag_name 2>/dev/null || true)
             if [ -n "$TAG" ]; then
@@ -211,8 +209,7 @@ jobs:
           name: lambda-zips
           path: lambda-zips
 
-      # The regional buckets hold only released code, so the checkout's template is stamped with the run id and pointed
-      # at a bucket of the run's own holding the zips under that version. The cleanup deletes it.
+      # The regional buckets hold only released code. The cleanup deletes the bucket.
       - name: "[Setup] Upload the Lambdas built from the checkout and point the template at them"
         if: ${{ startsWith(env.TEMPLATE_FROM, 'this checkout') }}
         run: |
