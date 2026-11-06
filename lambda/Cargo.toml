@@ -20,7 +20,7 @@ aws-sdk-rds = "1"
 aws-sdk-resourcegroupstagging = "1"
 base64 = "0.22"
 flate2 = "1"
-lambda_runtime = "0.14"
+lambda_runtime = "1"
 regex = "1"
 serde = { version = "1", features = ["derive"] }
 # preserve_order keeps the keys of a record in the order they arrived, with the added ones last
