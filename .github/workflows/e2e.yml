@@ -444,6 +444,16 @@ jobs:
             fi
           } > out/summary.md
 
+      # What the tag enrichment Lambdas cost: every invocation's REPORT line (duration, memory, the cold start's init).
+      - name: "[Report] Lambda invocation reports"
+        if: ${{ always() }}
+        run: |
+          for fn in better-stack-logs better-stack-metrics; do
+            echo "## $fn"
+            aws logs filter-log-events --log-group-name "/aws/lambda/$fn" --filter-pattern REPORT --query 'events[].message' --output text 2>/dev/null \
+              | tr '\t' '\n' | sed -E 's/^REPORT RequestId: [0-9a-f-]+[[:space:]]*//'
+          done
+
       - name: "[Cleanup] Delete this run's resources in Better Stack and AWS"
         if: ${{ always() }}
         run: bash e2e/cleanup.sh
