@@ -705,7 +705,7 @@ Resources:
     Properties:
       FunctionName: !Sub 'better-stack-metrics'
       Description: Enriches CloudWatch metric records with AWS resource tags
-      Runtime: ruby3.3
+      Runtime: ruby4.0
       Architectures:
         - arm64
       Handler: firehose_metrics_tag_enrichment.lambda_handler
@@ -738,7 +738,7 @@ Resources:
     Properties:
       FunctionName: !Sub 'better-stack-logs'
       Description: Enriches CloudWatch log records with AWS resource tags
-      Runtime: ruby3.3
+      Runtime: ruby4.0
       Architectures:
         - arm64
       Handler: firehose_logs_tag_enrichment.lambda_handler
