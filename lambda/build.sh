@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Builds both Lambdas for the provided.al2023 runtime on arm64 and zips each binary as `bootstrap`
-# into lambda/dist/<name>.zip, the files the template expects under rust/ in the code bucket.
+# into lambda/dist/<name>.zip: the E2E uploads them under the run id to a bucket of its own, the
+# Release workflow attaches them to the release.
 # Runs on an arm64 Linux host with Docker: the build happens inside Amazon Linux 2023, so the
 # binaries link against the same glibc that the Lambda runtime has. Cargo's registry, the toolchain
 # and the build output stay in lambda/.cache between runs.

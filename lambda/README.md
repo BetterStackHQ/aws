@@ -84,8 +84,8 @@ The tests replace the AWS APIs with an in-memory fake (`src/fake.rs`), so they n
 lambda/build.sh
 ```
 
-It builds both functions inside Amazon Linux 2023 on an arm64 host with Docker, so the binaries link against the glibc the Lambda runtime has, and writes `lambda/dist/firehose_logs_tag_enrichment.zip` and `lambda/dist/firehose_metrics_tag_enrichment.zip`. The E2E workflow builds them on every pull request and keeps them as the `lambda-zips` artifact.
+It builds both functions inside Amazon Linux 2023 on an arm64 host with Docker, so the binaries link against the glibc the Lambda runtime has, and writes `lambda/dist/firehose_logs_tag_enrichment.zip` and `lambda/dist/firehose_metrics_tag_enrichment.zip`. The E2E workflow builds them on every pull request and keeps them as the `lambda-zips` artifact; the Release workflow attaches them to the release.
 
 ## Deployment
 
-The template takes the code from `rust/<function>.zip` in the regional S3 bucket `better-stack-lambda-{region}`. Releasing new code means uploading both zips under `rust/` to every regional bucket before publishing a template that needs them. The E2E workflow uploads the zips it builds to a bucket of its own and points its copy of the template at it. See the [CloudFormation README](../cloudformation/full/README.md) for deployment commands.
+The template deploys the functions from `<version>/<function>.zip` in the regional S3 buckets (`better-stack-lambda-{region}`), where `<version>` is the release the template was stamped with. The E2E workflow builds the zips on every pull request, uploads them under the run id to a bucket of its own and points its copy of the template at it. See the [CloudFormation README](../cloudformation/full/README.md) for deployment commands.

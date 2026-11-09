@@ -177,7 +177,7 @@ When `EnableTagEnrichment=true`, [Lambda functions](../../lambda/README.md) enri
 - `/ecs/{cluster}/...` -> ECS tags
 - `/aws/api-gateway/{api-id}` -> API Gateway tags
 
-See the [Lambda README](../../lambda/README.md) for implementation details. Lambda code is deployed from `rust/` in regional S3 buckets (`better-stack-lambda-{region}`).
+See the [Lambda README](../../lambda/README.md) for implementation details. Lambda code is deployed from regional S3 buckets (`better-stack-lambda-{region}`).
 
 ## Stack Outputs
 

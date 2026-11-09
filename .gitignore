@@ -6,4 +6,5 @@ Thumbs.db
 # Rust build output and the Docker build cache
 lambda/target/
 lambda/.cache/
+# Lambda zips built by lambda/build.sh
 lambda/dist/
