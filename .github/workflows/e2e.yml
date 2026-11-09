@@ -5,7 +5,8 @@ name: "E2E"
 # checks that the first sync subscribes the run's log group, the static group, aws/spans and the CloudTrail group by
 # itself, then produces logs, a custom metric, an X-Ray trace and a CloudTrail management event in AWS and reads all of
 # them back through the team's SQL API connection with exact row counts. Pull requests and pushes to main deploy the
-# template from the checkout; the daily schedule deploys the published one and fails when it differs from main. Everything the run creates in AWS and Better Stack is named after
+# template from the checkout, with the Lambda zips built from it uploaded to a bucket of the run's own under the run id;
+# the daily schedule deploys the published template and fails when it differs from the newest release's. Everything the run creates in AWS and Better Stack is named after
 # RUN_ID and deleted in the cleanup step, together with leftovers of earlier runs. Within an hour of the previous run's
 # stack deletion, the static group, aws/spans and CloudTrail delivering nothing is a warning instead of a failure (see
 # the step that measures it). The docs check fails when the docs article stops naming a template toggle or output.
@@ -62,9 +63,25 @@ env:
   TEST_TEAM_CONNECTION_PASSWORD: ${{ secrets.TEST_TEAM_CONNECTION_PASSWORD }}
 
 jobs:
+  build-lambdas:
+    name: Build the Lambdas
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build the Lambda zips
+        run: lambda/build.sh
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: lambda-zips
+          path: lambda/dist/*.zip
+          retention-days: 7
+
   test:
     name: Stack round trip
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    needs: [build-lambdas]
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
@@ -72,7 +89,9 @@ jobs:
       - name: "[Setup] Checkout code"
         uses: actions/checkout@v7
 
-      - name: "[Check] Pick the template, docs article names every toggle and output, published template vs main"
+      - name: "[Check] Pick the template, docs article names every toggle and output, published template vs the newest release"
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           if [ -n "$TEMPLATE_URL_OVERRIDE" ]; then
             curl -sSfL "$TEMPLATE_URL_OVERRIDE" -o template.yaml; TEMPLATE_FROM="$TEMPLATE_URL_OVERRIDE"
@@ -83,13 +102,21 @@ jobs:
           fi
           echo "TEMPLATE_FROM=$TEMPLATE_FROM ($(git rev-parse --short HEAD))" >> "$GITHUB_ENV"
           curl -sSfL "$PUBLISHED_TEMPLATE_URL" -o template-published.yaml
-          if ! diff -q template-published.yaml cloudformation/full/better-stack-full.yaml >/dev/null; then
-            if [ "${{ github.event_name }}" = schedule ]; then
-              echo "::error::$PUBLISHED_TEMPLATE_URL differs from cloudformation/full/better-stack-full.yaml on main: the published template was not updated after a merge"
-              diff template-published.yaml cloudformation/full/better-stack-full.yaml | head -40
+          echo "published template: $(grep -m1 -E '^      Version: ' template-published.yaml || echo 'no version, published before releases were tagged')"
+          if [ "${{ github.event_name }}" = schedule ]; then
+            TAG=$(gh api "repos/${{ github.repository }}/releases/latest" --jq .tag_name 2>/dev/null || true)
+            if [ -n "$TAG" ]; then
+              gh release download "$TAG" -R "${{ github.repository }}" -p better-stack-full.yaml -O template-release.yaml
+              EXPECTED=template-release.yaml; EXPECTED_FROM="release $TAG"
+            else
+              EXPECTED=cloudformation/full/better-stack-full.yaml; EXPECTED_FROM="main (no release yet)"
+            fi
+            if ! diff -q template-published.yaml "$EXPECTED" >/dev/null; then
+              echo "::error::$PUBLISHED_TEMPLATE_URL differs from the template of $EXPECTED_FROM: the latest copy was not updated after the release"
+              diff template-published.yaml "$EXPECTED" | head -40
               exit 1
             fi
-            echo "::warning::$PUBLISHED_TEMPLATE_URL differs from the template in this checkout (expected while a change is unreleased)"
+            echo "published template is the one of $EXPECTED_FROM"
           fi
           TOGGLES=$(awk '/^Parameters:/{p=1;next} /^[A-Z][A-Za-z]*:/{p=0} p && /^  [A-Za-z]+:$/{name=substr($1,1,length($1)-1)} p && /^      - .false.$/{print name}' template.yaml | sort -u)
           OUTPUTS=$(awk '/^Outputs:/{p=1;next} p && /^  [A-Za-z]+:$/{print substr($1,1,length($1)-1)}' template.yaml)
@@ -174,6 +201,24 @@ jobs:
             aws logs create-log-group --log-group-name "$group"
             aws logs create-log-stream --log-group-name "$group" --log-stream-name run
           done
+
+      - name: "[Setup] Download the Lambdas built from the checkout"
+        if: ${{ startsWith(env.TEMPLATE_FROM, 'this checkout') }}
+        uses: actions/download-artifact@v8
+        with:
+          name: lambda-zips
+          path: lambda-zips
+
+      # The regional buckets hold only released code. The cleanup deletes the bucket.
+      - name: "[Setup] Upload the Lambdas built from the checkout and point the template at them"
+        if: ${{ startsWith(env.TEMPLATE_FROM, 'this checkout') }}
+        run: |
+          BUCKET="better-stack-e2e-lambda-code-$ACCOUNT_ID-$AWS_REGION"
+          aws s3 mb "s3://$BUCKET" >/dev/null
+          aws s3 cp lambda-zips/ "s3://$BUCKET/$RUN_ID/" --recursive --exclude '*' --include '*.zip'
+          sed -i -e "s|better-stack-lambda-\${AWS::Region}|$BUCKET|g" -e "s/^      Version: 0\.0\.0-dev$/      Version: $RUN_ID/" template.yaml
+          grep -q "$BUCKET" template.yaml && grep -q "^      Version: $RUN_ID$" template.yaml || { echo "::error::the template no longer names better-stack-lambda-\${AWS::Region} or 'Version: 0.0.0-dev', this step needs updating"; exit 1; }
+          ls -l lambda-zips
 
       - name: "[Test] Deploy the CloudFormation stack"
         run: |
