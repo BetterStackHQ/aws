@@ -340,7 +340,8 @@ jobs:
           }
           trap summarize_failure EXIT
           sql() {
-            CODE=$(curl -sS -o response.json -w '%{http_code}' -u "$TEST_TEAM_CONNECTION_USERNAME:$TEST_TEAM_CONNECTION_PASSWORD" -H 'Content-Type: plain/text' --data-binary "$1 FORMAT JSONEachRow" "https://$CONNECT_HOST/")
+            # wait=true queues the query for up to 60 s while the connection user's 4 concurrent logs queries are busy, instead of HTTP 429.
+            CODE=$(curl -sS -o response.json -w '%{http_code}' -u "$TEST_TEAM_CONNECTION_USERNAME:$TEST_TEAM_CONNECTION_PASSWORD" -H 'Content-Type: plain/text' --data-binary "$1 FORMAT JSONEachRow" "https://$CONNECT_HOST/?wait=true")
             # A source's logs, spans and metrics collections each exist only from their first stored row on;
             # until then the query is "no rows yet".
             [ "$CODE" = 500 ] && grep -q CLUSTER_DOESNT_EXIST response.json && return 0
