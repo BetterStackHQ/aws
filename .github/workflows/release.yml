@@ -1,7 +1,7 @@
 name: Release
 
-# Bumps the version, tags main and publishes the GitHub Release: the two Lambda zips, the template with the version
-# stamped in, and SHA256SUMS. Deploying the release to the S3 buckets is the deploy recipe's job.
+# Bumps the version, tags main and publishes the GitHub Release: the two Lambda zips, the two templates
+# (better-stack-full.yaml and better-stack-ai-sre.yaml) with the version stamped in, and SHA256SUMS. Deploying the release to the S3 buckets is the deploy recipe's job.
 
 on:
   workflow_dispatch:
@@ -55,14 +55,16 @@ jobs:
       - name: Build the Lambda zips
         run: lambda/build.sh
 
-      - name: Stamp the template and write the checksums
+      - name: Stamp the templates and write the checksums
         run: |
           mkdir release
-          sed "s/^      Version: 0\.0\.0-dev$/      Version: $VERSION/" cloudformation/full/better-stack-full.yaml > release/better-stack-full.yaml
-          grep -q "^      Version: $VERSION$" release/better-stack-full.yaml || { echo "::error::the template has no 'Version: 0.0.0-dev' line to stamp"; exit 1; }
+          for template in cloudformation/full/better-stack-full.yaml cloudformation/ai-sre/better-stack-ai-sre.yaml; do
+            sed "s/^      Version: 0\.0\.0-dev$/      Version: $VERSION/" "$template" > "release/$(basename "$template")"
+            grep -q "^      Version: $VERSION$" "release/$(basename "$template")" || { echo "::error::$template has no 'Version: 0.0.0-dev' line to stamp"; exit 1; }
+          done
           cp lambda/dist/firehose_logs_tag_enrichment.zip lambda/dist/firehose_metrics_tag_enrichment.zip release/
           cd release
-          sha256sum firehose_logs_tag_enrichment.zip firehose_metrics_tag_enrichment.zip better-stack-full.yaml > SHA256SUMS
+          sha256sum firehose_logs_tag_enrichment.zip firehose_metrics_tag_enrichment.zip better-stack-full.yaml better-stack-ai-sre.yaml > SHA256SUMS
           cat SHA256SUMS
 
       - uses: aws-actions/configure-aws-credentials@v5
@@ -70,8 +72,10 @@ jobs:
           role-to-assume: ${{ env.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: The stamped template is valid CloudFormation
-        run: aws cloudformation validate-template --template-body file://release/better-stack-full.yaml >/dev/null
+      - name: The stamped templates are valid CloudFormation
+        run: |
+          aws cloudformation validate-template --template-body file://release/better-stack-full.yaml >/dev/null
+          aws cloudformation validate-template --template-body file://release/better-stack-ai-sre.yaml >/dev/null
 
       - uses: actions/upload-artifact@v7
         with:
@@ -90,5 +94,5 @@ jobs:
           gh api "repos/${{ github.repository }}/releases/generate-notes" -f tag_name="v$VERSION" ${PREVIOUS_TAG:+-f previous_tag_name="$PREVIOUS_TAG"} --jq .body > notes.md
           { echo; echo "## Artifacts"; echo; echo '```'; cat release/SHA256SUMS; echo '```'; } >> notes.md
           gh release create "v$VERSION" --verify-tag --title "v$VERSION" --notes-file notes.md \
-            release/firehose_logs_tag_enrichment.zip release/firehose_metrics_tag_enrichment.zip release/better-stack-full.yaml release/SHA256SUMS
+            release/firehose_logs_tag_enrichment.zip release/firehose_metrics_tag_enrichment.zip release/better-stack-full.yaml release/better-stack-ai-sre.yaml release/SHA256SUMS
           echo "released https://github.com/${{ github.repository }}/releases/tag/v$VERSION"

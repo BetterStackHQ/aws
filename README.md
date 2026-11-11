@@ -7,6 +7,7 @@ This repository contains CloudFormation stacks and Lambda functions for streamin
 | Directory | Description |
 |-----------|-------------|
 | [cloudformation/full/](cloudformation/full/README.md) | CloudFormation template and deployment guide |
+| [cloudformation/ai-sre/](cloudformation/ai-sre/README.md) | CloudFormation template for Better Stack AI SRE: one read-only IAM role |
 | [lambda/](lambda/README.md) | Firehose transformation Lambda functions |
 | [e2e/](.github/workflows/e2e.yml) | End-to-end test: deploys the template into a throwaway AWS account on every pull request, push to main and daily |
 

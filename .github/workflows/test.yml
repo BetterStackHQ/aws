@@ -30,3 +30,31 @@ jobs:
 
       - name: Check formatting
         run: cargo fmt --check
+
+  cloudformation:
+    name: CloudFormation templates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Install cfn-lint
+        run: pip install cfn-lint==1.60.0 pyyaml==6.0.3
+
+      - name: Lint the AI SRE template
+        run: cfn-lint cloudformation/ai-sre/better-stack-ai-sre.yaml
+
+      # The full template carries warnings (W1020) that predate this job; it fails on errors only.
+      - name: Lint the full template (errors only)
+        run: cfn-lint --non-zero-exit-code error cloudformation/full/better-stack-full.yaml
+
+      - name: The AI SRE template keeps its contract
+        working-directory: cloudformation/ai-sre/test
+        run: python check_contract.py
+
+      - name: Test the contract check and the policy simulator script
+        working-directory: cloudformation/ai-sre/test
+        run: python -m unittest -v

@@ -1,0 +1,104 @@
+{
+  "about": "The fields of better-stack-ai-sre.yaml that no release may break; test/check_contract.py checks the template against them. Change this file only to change the contract, on purpose: parameters are only ever added, always with a default.",
+  "parameters": {
+    "ExternalId": {
+      "Type": "String",
+      "AllowedPattern": "^bs-ai-sre-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "BetterStackTeam": {
+      "Type": "String",
+      "Default": "",
+      "AllowedPattern": "^[A-Za-z0-9 ._()-]{0,128}$"
+    },
+    "BetterStackEnvironment": {
+      "Type": "String",
+      "Default": "production",
+      "AllowedValues": [
+        "production",
+        "staging",
+        "development"
+      ]
+    },
+    "AllowConfigurationValues": {
+      "Type": "String",
+      "Default": "true",
+      "AllowedValues": [
+        "true",
+        "false"
+      ]
+    },
+    "PermissionsBoundaryArn": {
+      "Type": "String",
+      "Default": ""
+    }
+  },
+  "role_logical_id": "AiSreRole",
+  "role_name": {
+    "Fn::Join": [
+      "",
+      [
+        "better-stack-ai-sre-role-",
+        {
+          "Fn::Select": [
+            3,
+            {
+              "Fn::Split": [
+                "-",
+                {
+                  "Ref": "ExternalId"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    ]
+  },
+  "version_tag_key": "BetterStackAiSreTemplateVersion",
+  "trust": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "AssumeWithExternalId",
+        "Effect": "Allow",
+        "Principal": {
+          "AWS": "arn:aws:iam::476114145753:root"
+        },
+        "Action": "sts:AssumeRole",
+        "Condition": {
+          "StringEquals": {
+            "sts:ExternalId": {
+              "Ref": "ExternalId"
+            }
+          },
+          "ArnLike": {
+            "aws:PrincipalArn": {
+              "Fn::Sub": "arn:aws:iam::476114145753:*/better-stack-ai-sre/${BetterStackEnvironment}/*"
+            }
+          }
+        }
+      },
+      {
+        "Sid": "SourceIdentityAndSessionTags",
+        "Effect": "Allow",
+        "Principal": {
+          "AWS": "arn:aws:iam::476114145753:root"
+        },
+        "Action": [
+          "sts:SetSourceIdentity",
+          "sts:TagSession"
+        ],
+        "Condition": {
+          "ArnLike": {
+            "aws:PrincipalArn": {
+              "Fn::Sub": "arn:aws:iam::476114145753:*/better-stack-ai-sre/${BetterStackEnvironment}/*"
+            }
+          }
+        }
+      }
+    ]
+  },
+  "outputs": [
+    "IntegrationRoleArn"
+  ]
+}

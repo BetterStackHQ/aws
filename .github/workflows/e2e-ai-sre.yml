@@ -1,0 +1,165 @@
+name: "E2E AI SRE"
+
+# Deploys cloudformation/ai-sre/better-stack-ai-sre.yaml from the checkout the way a customer does, checks the role it
+# makes (name, version tag, description, two-statement trust), asserts every allowed read and every explicit deny with
+# IAM's policy simulator (cloudformation/ai-sre/test/simulate_policy.py), updates the stack in place to
+# AllowConfigurationValues=false, checks the role kept its ID and runs the simulator again, then deletes the stack.
+# Nothing assumes the role: it trusts only Better Stack's account.
+#
+# AWS: the job assumes the role in the repository secret AI_SRE_E2E_ROLE_ARN through GitHub OIDC. That role needs
+# cloudformation:CreateStack, UpdateStack, DeleteStack, DescribeStacks, DescribeStackEvents and ListStacks on stacks
+# named e2e-ai-sre-*, iam:CreateRole, DeleteRole, GetRole, TagRole, UntagRole, UpdateRoleDescription,
+# PutRolePolicy, DeleteRolePolicy, GetRolePolicy, ListRolePolicies and ListAttachedRolePolicies on roles named
+# better-stack-ai-sre-role-*, iam:SimulatePrincipalPolicy, and cloudformation:ValidateTemplate. Without the secret the
+# job skips with a notice. Pull requests from forks are skipped: they get no OIDC token.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - cloudformation/ai-sre/**
+      - .github/workflows/e2e-ai-sre.yml
+  pull_request:
+    paths:
+      - cloudformation/ai-sre/**
+      - .github/workflows/e2e-ai-sre.yml
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+# The leftover sweep deletes every e2e-ai-sre-* stack, so one run at a time.
+concurrency:
+  group: e2e-ai-sre
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+  AWS_ROLE_ARN: ${{ secrets.AI_SRE_E2E_ROLE_ARN }}
+  RUN_ID: gh${{ github.run_id }}a${{ github.run_attempt }}
+
+jobs:
+  test:
+    name: AI SRE stack round trip
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: "[Setup] Skip without AWS credentials"
+        id: aws
+        run: |
+          if [ -z "$AWS_ROLE_ARN" ]; then
+            echo "::notice::the repository secret AI_SRE_E2E_ROLE_ARN is not set, so the AI SRE stack was not deployed"
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: "[Setup] Checkout code"
+        if: ${{ steps.aws.outputs.enabled == 'true' }}
+        uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        if: ${{ steps.aws.outputs.enabled == 'true' }}
+        with:
+          python-version: '3.12'
+
+      - name: "[Setup] Install boto3"
+        if: ${{ steps.aws.outputs.enabled == 'true' }}
+        run: pip install boto3
+
+      - name: "[Setup] AWS credentials (OIDC)"
+        if: ${{ steps.aws.outputs.enabled == 'true' }}
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: "[Setup] Stamp the template with the run's version, generate the external ID"
+        if: ${{ steps.aws.outputs.enabled == 'true' }}
+        run: |
+          sed "s/^      Version: 0\.0\.0-dev$/      Version: $RUN_ID/" cloudformation/ai-sre/better-stack-ai-sre.yaml > template.yaml
+          grep -q "^      Version: $RUN_ID$" template.yaml || { echo "::error::the template has no 'Version: 0.0.0-dev' line to stamp"; exit 1; }
+          aws cloudformation validate-template --template-body file://template.yaml >/dev/null
+          EXTERNAL_ID="bs-ai-sre-$(python3 -c 'import uuid; print(uuid.uuid4())')"
+          SUFFIX=$(cut -d- -f4 <<<"$EXTERNAL_ID")
+          # Half of what assumes the role; this repository is public.
+          echo "::add-mask::$EXTERNAL_ID"
+          {
+            echo "EXTERNAL_ID=$EXTERNAL_ID"
+            echo "STACK_NAME=e2e-ai-sre-$SUFFIX"
+            echo "EXPECTED_ROLE_NAME=better-stack-ai-sre-role-$SUFFIX"
+          } >> "$GITHUB_ENV"
+          echo "stack e2e-ai-sre-$SUFFIX, role better-stack-ai-sre-role-$SUFFIX, version $RUN_ID"
+
+      # A cancelled run can leave its stack behind.
+      - name: "[Setup] Delete stacks left by earlier runs"
+        if: ${{ steps.aws.outputs.enabled == 'true' }}
+        run: |
+          for stack in $(aws cloudformation list-stacks --stack-status-filter CREATE_COMPLETE CREATE_FAILED ROLLBACK_COMPLETE ROLLBACK_FAILED UPDATE_COMPLETE UPDATE_ROLLBACK_COMPLETE UPDATE_ROLLBACK_FAILED DELETE_FAILED \
+            --query "StackSummaries[?starts_with(StackName, 'e2e-ai-sre-')].StackName" --output text); do
+            echo "deleting leftover stack $stack"
+            aws cloudformation delete-stack --stack-name "$stack"
+            aws cloudformation wait stack-delete-complete --stack-name "$stack" || echo "::warning::leftover stack $stack was not deleted"
+          done
+
+      - name: "[Test] Deploy the stack with the defaults"
+        if: ${{ steps.aws.outputs.enabled == 'true' }}
+        run: |
+          aws cloudformation create-stack --stack-name "$STACK_NAME" --template-body file://template.yaml --capabilities CAPABILITY_NAMED_IAM \
+            --parameters "ParameterKey=ExternalId,ParameterValue=$EXTERNAL_ID" "ParameterKey=BetterStackTeam,ParameterValue=E2E test ($RUN_ID)"
+          if ! aws cloudformation wait stack-create-complete --stack-name "$STACK_NAME"; then
+            echo "::error::stack creation failed: $(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --query 'Stacks[0].StackStatus' --output text)"
+            aws cloudformation describe-stack-events --stack-name "$STACK_NAME" --query "StackEvents[?ends_with(ResourceStatus, 'FAILED')].[LogicalResourceId,ResourceStatus,ResourceStatusReason]" --output table
+            exit 1
+          fi
+          ROLE_ARN=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --query "Stacks[0].Outputs[?OutputKey=='IntegrationRoleArn'].OutputValue" --output text)
+          echo "ROLE_ARN=$ROLE_ARN" >> "$GITHUB_ENV"
+          echo "deployed $ROLE_ARN"
+
+      - name: "[Test] The role has the contract's name, version tag, description and two-statement trust"
+        if: ${{ steps.aws.outputs.enabled == 'true' }}
+        run: |
+          aws iam get-role --role-name "$EXPECTED_ROLE_NAME" --output json > role.json
+          jq -r '.Role.RoleId' role.json > role-id.txt
+          fail() { echo "::error::$1"; exit 1; }
+          [ "$(jq -r '.Role.Arn' role.json)" = "$ROLE_ARN" ] || fail "the stack output $ROLE_ARN is not role $EXPECTED_ROLE_NAME"
+          [ "$(jq -r '.Role.Tags[] | select(.Key == "BetterStackAiSreTemplateVersion") | .Value' role.json)" = "$RUN_ID" ] || fail "the role's BetterStackAiSreTemplateVersion tag is not $RUN_ID"
+          [ "$(jq -r '.Role.Description' role.json)" = "Read-only access for Better Stack AI SRE. Team: E2E test ($RUN_ID)" ] || fail "unexpected description: $(jq -r '.Role.Description' role.json)"
+          jq -e '.Role.AssumeRolePolicyDocument.Statement | length == 2' role.json >/dev/null || fail "the trust does not have two statements"
+          jq -e '[.Role.AssumeRolePolicyDocument.Statement[] | .Action | if type == "string" then [.] else . end | sort] == [["sts:AssumeRole"], ["sts:SetSourceIdentity", "sts:TagSession"]]' role.json >/dev/null \
+            || fail "the trust is not sts:AssumeRole, then sts:SetSourceIdentity + sts:TagSession"
+          jq -e '.Role.AssumeRolePolicyDocument.Statement[0].Condition.ArnLike["aws:PrincipalArn"] == "arn:aws:iam::476114145753:*/better-stack-ai-sre/production/*"' role.json >/dev/null \
+            || fail "the trust does not pin the production callers"
+          echo "role $EXPECTED_ROLE_NAME: version tag, description and trust as expected"
+
+      - name: "[Test] Policy simulator, AllowConfigurationValues=true"
+        if: ${{ steps.aws.outputs.enabled == 'true' }}
+        run: python3 cloudformation/ai-sre/test/simulate_policy.py --role-arn "$ROLE_ARN" --allow-configuration-values true --region "$AWS_REGION"
+
+      - name: "[Test] Update the stack in place to AllowConfigurationValues=false"
+        if: ${{ steps.aws.outputs.enabled == 'true' }}
+        run: |
+          aws cloudformation update-stack --stack-name "$STACK_NAME" --use-previous-template --capabilities CAPABILITY_NAMED_IAM \
+            --parameters ParameterKey=ExternalId,UsePreviousValue=true ParameterKey=BetterStackTeam,UsePreviousValue=true ParameterKey=BetterStackEnvironment,UsePreviousValue=true \
+            ParameterKey=PermissionsBoundaryArn,UsePreviousValue=true ParameterKey=AllowConfigurationValues,ParameterValue=false
+          if ! aws cloudformation wait stack-update-complete --stack-name "$STACK_NAME"; then
+            echo "::error::stack update failed: $(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --query 'Stacks[0].StackStatus' --output text)"
+            aws cloudformation describe-stack-events --stack-name "$STACK_NAME" --query "StackEvents[?ends_with(ResourceStatus, 'FAILED')].[LogicalResourceId,ResourceStatus,ResourceStatusReason]" --output table
+            exit 1
+          fi
+          [ "$(aws iam get-role --role-name "$EXPECTED_ROLE_NAME" --query Role.RoleId --output text)" = "$(cat role-id.txt)" ] || { echo "::error::the update replaced the role"; exit 1; }
+          echo "updated in place, the role kept its ID"
+
+      - name: "[Test] Policy simulator, AllowConfigurationValues=false"
+        if: ${{ steps.aws.outputs.enabled == 'true' }}
+        run: python3 cloudformation/ai-sre/test/simulate_policy.py --role-arn "$ROLE_ARN" --allow-configuration-values false --region "$AWS_REGION"
+
+      - name: "[Cleanup] Delete the stack"
+        if: ${{ always() && steps.aws.outputs.enabled == 'true' && env.STACK_NAME != '' }}
+        run: |
+          aws cloudformation delete-stack --stack-name "$STACK_NAME"
+          aws cloudformation wait stack-delete-complete --stack-name "$STACK_NAME" || { echo "::error::stack $STACK_NAME was not deleted"; exit 1; }
+          echo "deleted $STACK_NAME"
