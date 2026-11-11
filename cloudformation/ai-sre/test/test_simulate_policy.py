@@ -22,22 +22,23 @@ ROLE_ARN = f"arn:aws:iam::{ACCOUNT}:role/better-stack-ai-sre-role-1a2b3c4d"
 DENIED_IN_EVERY_SETTING = [
     "s3:GetObject", "secretsmanager:GetSecretValue", "ssm:GetParameter", "lambda:GetFunction", "lambda:InvokeFunction",
     "dynamodb:GetItem", "dynamodb:BatchGetItem", "dynamodb:Query", "dynamodb:Scan", "sqs:ReceiveMessage",
-    "kinesis:GetRecords", "ec2:GetPasswordData", "logs:Unmask",
+    "kinesis:GetRecords", "ec2:GetPasswordData", "ec2:DescribeVpnConnections", "logs:Unmask",
 ]
-DENIED_API_GATEWAY_PATHS = ["/apikeys", "/apikeys/key123"]
+DENIED_API_GATEWAY_PATHS = ["/apikeys", "/apikeys/key123", "/usageplans/plan123/keys", "/usageplans/plan123/keys/key123"]
 DENIED_WITHOUT_CONFIGURATION_VALUES = [
     "lambda:ListFunctions", "lambda:ListVersionsByFunction", "lambda:GetFunctionConfiguration",
     "ecs:DescribeTaskDefinition", "ecs:DescribeTasks", "batch:DescribeJobDefinitions", "batch:DescribeJobs",
     "ec2:DescribeInstanceAttribute", "ec2:DescribeLaunchTemplateVersions", "ec2:DescribeSpotFleetRequests",
     "autoscaling:DescribeLaunchConfigurations", "cloudformation:DescribeStacks", "cloudformation:DescribeChangeSet",
-    "events:ListTargetsByRule", "firehose:DescribeDeliveryStream",
+    "cloudformation:DescribeStackEvents", "cloudformation:ListExports", "events:ListTargetsByRule",
+    "firehose:DescribeDeliveryStream",
 ]
 STAGE_PATHS = ["/restapis/abc123/stages", "/restapis/abc123/stages/prod", "/apis/abc123/stages", "/apis/abc123/stages/prod"]
 # Readable in both settings: the investigation reads, the self-read, the MCP token, and the one Spot read that
 # returns no user data.
 ALLOWED_IN_EVERY_SETTING = [
     "cloudwatch:DescribeAlarms", "logs:StartQuery", "logs:StopQuery", "cloudtrail:LookupEvents",
-    "xray:GetTraceSummaries", "xray:BatchGetTraces", "cloudformation:DescribeStackEvents", "cloudformation:ListStacks",
+    "xray:GetTraceSummaries", "xray:BatchGetTraces", "cloudformation:DescribeStackResources", "cloudformation:ListStacks",
     "application-autoscaling:DescribeScalableTargets", "iam:ListAccountAliases", "account:ListRegions",
     "ec2:DescribeSpotInstanceRequests",
 ]

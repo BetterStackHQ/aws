@@ -60,21 +60,21 @@ An explicit deny, so that a broader policy attached to the role later can't wide
 - S3 objects, Secrets Manager secret values, SSM parameter values
 - Lambda function code (`lambda:GetFunction`) and invocation
 - DynamoDB items, SQS messages, Kinesis records
-- EC2 Windows passwords, unmasked CloudWatch Logs data
-- API Gateway API keys
+- EC2 Windows passwords, site-to-site VPN connections (they carry the tunnels' pre-shared keys), unmasked CloudWatch Logs data
+- API Gateway API keys, also through usage plans
 - `kms:Decrypt` through any service other than CloudWatch Logs and Lambda
 
 Lambda decrypts a function's environment variables as the caller, so Lambda is excepted from the `kms:Decrypt` deny: environment variables under the default `aws/lambda` key are readable. Under your own key they are not, since the role has no `kms:Decrypt` allow that reaches it (unless your key policy grants the role directly).
 
 ### Configuration values
 
-Read-only isn't secret-free. With `AllowConfigurationValues=true`, the default, the role can read Lambda, ECS and Batch environment variables, EC2 and Auto Scaling user data, CloudFormation parameters that aren't `NoEcho`, EventBridge target inputs, API Gateway stage variables and Firehose destination settings. These are often where a misconfiguration shows.
+Read-only isn't secret-free. With `AllowConfigurationValues=true`, the default, the role can read Lambda, ECS and Batch environment variables, EC2 and Auto Scaling user data, CloudFormation parameters that aren't `NoEcho`, outputs and the resource properties in stack events, EventBridge target inputs, API Gateway stage variables and Firehose destination settings. These are often where a misconfiguration shows.
 
 With `AllowConfigurationValues=false`, the stack attaches a deny on every read Better Stack knows returns them:
 
-`lambda:ListFunctions`, `lambda:ListVersionsByFunction`, `lambda:GetFunctionConfiguration`, `ecs:DescribeTaskDefinition`, `ecs:DescribeTasks`, `batch:DescribeJobDefinitions`, `batch:DescribeJobs`, `ec2:DescribeInstanceAttribute`, `ec2:DescribeLaunchTemplateVersions`, `ec2:DescribeSpotFleetRequests`, `autoscaling:DescribeLaunchConfigurations`, `cloudformation:DescribeStacks`, `cloudformation:DescribeChangeSet`, `events:ListTargetsByRule`, `firehose:DescribeDeliveryStream`, and API Gateway stages (`/restapis/*/stages*`, `/apis/*/stages*`).
+`lambda:ListFunctions`, `lambda:ListVersionsByFunction`, `lambda:GetFunctionConfiguration`, `ecs:DescribeTaskDefinition`, `ecs:DescribeTasks`, `batch:DescribeJobDefinitions`, `batch:DescribeJobs`, `ec2:DescribeInstanceAttribute`, `ec2:DescribeLaunchTemplateVersions`, `ec2:DescribeSpotFleetRequests`, `autoscaling:DescribeLaunchConfigurations`, `cloudformation:DescribeStacks`, `cloudformation:DescribeChangeSet`, `cloudformation:DescribeStackEvents`, `cloudformation:ListExports`, `events:ListTargetsByRule`, `firehose:DescribeDeliveryStream`, and API Gateway stages (`/restapis/*/stages*`, `/apis/*/stages*`).
 
-AI SRE then can't see configuration changes in those services. A later release that adds a read to this list is a fix to the same rule.
+AI SRE then can't see configuration changes in those services, or a stack's deployment history: stack events carry each resource's properties. A later release that adds a read to this list is a fix to the same rule.
 
 ## Upgrade
 

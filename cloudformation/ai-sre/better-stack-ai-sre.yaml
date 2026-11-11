@@ -281,6 +281,8 @@ Resources:
                   - sqs:ReceiveMessage
                   - kinesis:GetRecords
                   - ec2:GetPasswordData
+                  # Returns the tunnels' pre-shared keys.
+                  - ec2:DescribeVpnConnections
                   - logs:Unmask
                 Resource: '*'
               - Sid: DenyApiKeys
@@ -290,6 +292,9 @@ Resources:
                 Resource:
                   - 'arn:aws:apigateway:*::/apikeys'
                   - 'arn:aws:apigateway:*::/apikeys/*'
+                  # A usage plan's keys carry the same values.
+                  - 'arn:aws:apigateway:*::/usageplans/*/keys'
+                  - 'arn:aws:apigateway:*::/usageplans/*/keys/*'
               # Lambda decrypts a function's environment as the caller, so Lambda is excepted too: without it no
               # function's environment variables would be readable. Under a customer managed key they still are not,
               # as nothing above allows kms:Decrypt through Lambda.
@@ -326,6 +331,9 @@ Resources:
                     - autoscaling:DescribeLaunchConfigurations
                     - cloudformation:DescribeStacks
                     - cloudformation:DescribeChangeSet
+                    # Stack events carry each resource's properties, and exports carry output values.
+                    - cloudformation:DescribeStackEvents
+                    - cloudformation:ListExports
                     - events:ListTargetsByRule
                     - firehose:DescribeDeliveryStream
                   Resource: '*'
