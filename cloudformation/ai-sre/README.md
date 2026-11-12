@@ -71,6 +71,8 @@ An explicit deny, so that a broader policy attached to the role later can't wide
 - EC2 Windows passwords, site-to-site VPN connections (they carry the tunnels' pre-shared keys), unmasked CloudWatch Logs data
 - API Gateway API keys, also through usage plans
 - CloudWatch Omni's temporary credentials for a space (`cloudwatch:GetSpace*`: `GetSpaceCredentials`, `GetSpaceCredentialsForOrganization`, `GetSpaceDataAccess`)
+- CloudWatch Omni query results (`cloudwatch:GetTelemetryQueryResults`), which can hold rows of a query someone else ran, even with `logs:Unmask`
+- X-Ray sampling targets (`xray:GetSamplingTargets`), which report sampling statistics and change how X-Ray allocates your sampling quota
 - `kms:Decrypt` through any service other than CloudWatch Logs and Lambda
 
 Lambda decrypts a function's environment variables as the caller, so Lambda is excepted from the `kms:Decrypt` deny: environment variables under the default `aws/lambda` key are readable. Under your own key they are not, since the role has no `kms:Decrypt` allow that reaches it (unless your key policy grants the role directly).

@@ -283,6 +283,10 @@ Resources:
                   # CloudWatch Omni's GetSpaceCredentials, GetSpaceCredentialsForOrganization and GetSpaceDataAccess hand
                   # out temporary credentials of a space's own role, which these denies don't bind.
                   - cloudwatch:GetSpace*
+                  # Can return rows of an Omni query someone else started, even one run with logs:Unmask; the role can't start queries.
+                  - cloudwatch:GetTelemetryQueryResults
+                  # Under xray:Get*, but reports sampling statistics and changes how X-Ray allocates the sampling quota.
+                  - xray:GetSamplingTargets
                 Resource: '*'
               - Sid: DenyApiKeys
                 Effect: Deny

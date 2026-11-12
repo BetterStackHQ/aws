@@ -25,6 +25,7 @@ DENIED_IN_EVERY_SETTING = [
     "kinesis:GetRecords", "ec2:GetPasswordData", "ec2:DescribeVpnConnections", "logs:Unmask",
     "dynamodb:PartiQLSelect", "dynamodb:GetRecords", "kinesis:SubscribeToShard",
     "cloudwatch:GetSpaceCredentials", "cloudwatch:GetSpaceCredentialsForOrganization", "cloudwatch:GetSpaceDataAccess",
+    "cloudwatch:GetTelemetryQueryResults", "xray:GetSamplingTargets",
 ]
 DENIED_API_GATEWAY_PATHS = ["/apikeys", "/apikeys/key123", "/usageplans/plan123/keys", "/usageplans/plan123/keys/key123"]
 DENIED_WITHOUT_CONFIGURATION_VALUES = [

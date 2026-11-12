@@ -154,6 +154,8 @@ CHECKS = [
     ("cloudwatch:GetSpaceCredentials", ANY, (), *both(DENY)),
     ("cloudwatch:GetSpaceCredentialsForOrganization", ANY, (), *both(DENY)),
     ("cloudwatch:GetSpaceDataAccess", ANY, (), *both(DENY)),
+    ("cloudwatch:GetTelemetryQueryResults", ANY, (), *both(DENY)),
+    ("xray:GetSamplingTargets", ANY, (), *both(DENY)),
     # Configuration values: readable by default, denied with AllowConfigurationValues=false.
     ("lambda:ListFunctions", ANY, (), *CONFIG),
     ("lambda:ListVersionsByFunction", ANY, (), *CONFIG),
