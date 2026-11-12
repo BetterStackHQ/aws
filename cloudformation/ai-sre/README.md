@@ -24,7 +24,7 @@ The stack can be deployed in any region; IAM roles are global.
 
 One IAM role, `better-stack-ai-sre-role-<8 hex>`, where `<8 hex>` is the first eight hex digits after `bs-ai-sre-` in the external ID. It's tagged `Solution: BetterStack` and `BetterStackAiSreTemplateVersion: <release>`, the release of this template that made it. The stack output `IntegrationRoleArn` is its ARN.
 
-Only Better Stack's AI SRE callers for the chosen environment can assume the role, and only with the external ID Better Stack generated for your integration. A second trust statement lets the same callers set a source identity and session tags; it grants no access by itself.
+Only Better Stack's AI SRE callers for the chosen environment can assume the role, and only with the external ID Better Stack generated for your integration.
 
 ## Parameters
 
@@ -46,7 +46,7 @@ The role reads configuration and telemetry, never data or secrets:
 - Load balancers, API Gateway configuration and Route 53 zones
 - SQS, SNS, Kinesis and Firehose metadata; Step Functions and EventBridge
 - CloudTrail trails and event history (`LookupEvents`), AWS Health events, X-Ray traces
-- CloudFormation stacks and stack events, Application Auto Scaling, the account alias and enabled regions
+- CloudFormation stacks and stack events (stack events are denied with `AllowConfigurationValues=false`), Application Auto Scaling, the account alias and enabled regions
 - Its own role and policies (`iam:GetRole` and the policy reads on its own ARN only), to tell which release it runs
 - `signin:CreateOAuth2Token` for AWS's MCP Server, which Better Stack calls with the role's session
 - `kms:Decrypt` only through CloudWatch Logs, for log groups encrypted with your key
@@ -59,7 +59,7 @@ An explicit deny, so that a broader policy attached to the role later can't wide
 
 - S3 objects, Secrets Manager secret values, SSM parameter values
 - Lambda function code (`lambda:GetFunction`) and invocation
-- DynamoDB items, SQS messages, Kinesis records
+- DynamoDB items and streams, SQS messages, Kinesis records
 - EC2 Windows passwords, site-to-site VPN connections (they carry the tunnels' pre-shared keys), unmasked CloudWatch Logs data
 - API Gateway API keys, also through usage plans
 - `kms:Decrypt` through any service other than CloudWatch Logs and Lambda
@@ -68,11 +68,11 @@ Lambda decrypts a function's environment variables as the caller, so Lambda is e
 
 ### Configuration values
 
-Read-only isn't secret-free. With `AllowConfigurationValues=true`, the default, the role can read Lambda, ECS and Batch environment variables, EC2 and Auto Scaling user data, CloudFormation parameters that aren't `NoEcho`, outputs and the resource properties in stack events, EventBridge target inputs, API Gateway stage variables and Firehose destination settings. These are often where a misconfiguration shows.
+Read-only isn't secret-free. With `AllowConfigurationValues=true`, the default, the role can read Lambda, ECS and Batch environment variables, EC2 and Auto Scaling user data, CloudFormation parameters that aren't `NoEcho`, outputs and the resource properties in stack events, drift results and stack sets, EventBridge target inputs, API Gateway stage variables, Firehose destination settings and EKS add-on configuration values. These are often where a misconfiguration shows.
 
 With `AllowConfigurationValues=false`, the stack attaches a deny on every read Better Stack knows returns them:
 
-`lambda:ListFunctions`, `lambda:ListVersionsByFunction`, `lambda:GetFunctionConfiguration`, `ecs:DescribeTaskDefinition`, `ecs:DescribeTasks`, `batch:DescribeJobDefinitions`, `batch:DescribeJobs`, `ec2:DescribeInstanceAttribute`, `ec2:DescribeLaunchTemplateVersions`, `ec2:DescribeSpotFleetRequests`, `autoscaling:DescribeLaunchConfigurations`, `cloudformation:DescribeStacks`, `cloudformation:DescribeChangeSet`, `cloudformation:DescribeStackEvents`, `cloudformation:ListExports`, `events:ListTargetsByRule`, `firehose:DescribeDeliveryStream`, and API Gateway stages (`/restapis/*/stages*`, `/apis/*/stages*`).
+`lambda:ListFunctions`, `lambda:ListVersionsByFunction`, `lambda:GetFunctionConfiguration`, `ecs:DescribeTaskDefinition`, `ecs:DescribeTasks`, `batch:DescribeJobDefinitions`, `batch:DescribeJobs`, `ec2:DescribeInstanceAttribute`, `ec2:DescribeLaunchTemplateVersions`, `ec2:DescribeSpotFleetRequests`, `autoscaling:DescribeLaunchConfigurations`, `cloudformation:DescribeStacks`, `cloudformation:DescribeChangeSet`, `cloudformation:DescribeStackEvents`, `cloudformation:ListExports`, `cloudformation:DescribeStackResourceDrifts`, `cloudformation:ListStackInstanceResourceDrifts`, `cloudformation:DescribeStackSet`, `cloudformation:DescribeStackInstance`, `eks:DescribeAddon`, `events:ListTargetsByRule`, `firehose:DescribeDeliveryStream`, and API Gateway stages (`/restapis/*/stages*`, `/apis/*/stages*`).
 
 AI SRE then can't see configuration changes in those services, or a stack's deployment history: stack events carry each resource's properties. A later release that adds a read to this list is a fix to the same rule.
 
@@ -95,7 +95,7 @@ Better Stack, setup links already sent, stacks updated in place and roles rebuil
 - Parameters are only ever added, always with a default. None is renamed or removed.
 - The role name expression and the `ExternalId` pattern never change.
 - The tag key `BetterStackAiSreTemplateVersion` never changes.
-- The trust keeps its two statements.
+- The trust is one statement: `sts:AssumeRole` alone, with the external ID and the callers' path conditions.
 - Better Stack's role session names start with `BetterStackAiSre-`.
 
 [`contract.json`](contract.json) records these fields. CI lints the template with cfn-lint, checks it against the contract (`test/check_contract.py`), and runs the tests of that check and of the policy simulator script:

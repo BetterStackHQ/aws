@@ -3,9 +3,9 @@
 
 Fails when a parameter is removed or renamed, a parameter has no default (only ExternalId may lack one), a parameter
 is not recorded in the contract yet, a recorded parameter's type, default, pattern or allowed values change, the
-RoleName expression or the ExternalId pattern change, the version tag key changes, the trust is no longer the two
-recorded statements (or they are merged into one), the role's logical ID or the IntegrationRoleArn output go, or the
-Release mapping loses the line the Release workflow stamps.
+RoleName expression or the ExternalId pattern change, the version tag key changes, the trust is no longer the one
+recorded statement (sts:AssumeRole alone, with the external ID and the callers' path conditions), the role's logical ID
+or the IntegrationRoleArn output go, or the Release mapping loses the line the Release workflow stamps.
 
 A change to any of these is a change of contract: make it on purpose, in contract.json, in the same pull request.
 
@@ -31,7 +31,6 @@ RECORDED_PARAMETER_FIELDS = ("Type", "Default", "AllowedPattern", "AllowedValues
 STAMP_LINE = re.compile(r"^      Version: 0\.0\.0-dev$", re.MULTILINE)
 SAMPLE_EXTERNAL_ID = "bs-ai-sre-1a2b3c4d-0000-4000-8000-00000000abcd"
 SAMPLE_ROLE_NAME = "better-stack-ai-sre-role-1a2b3c4d"
-SIDE_ACTIONS = {"sts:SetSourceIdentity", "sts:TagSession"}
 
 
 def _actions(statement):
@@ -117,26 +116,22 @@ def check_role(template, contract):
 
 
 def check_trust_shape(statements):
-    """The two statements, never merged, whatever contract.json says."""
+    """One statement allowing sts:AssumeRole alone, under the external ID and the callers' path, whatever contract.json
+    says."""
     errors = []
-    if len(statements) != 2:
-        errors.append(f"the trust has {len(statements)} statements, not 2")
-    for i, statement in enumerate(statements):
-        actions = _actions(statement)
-        external_id = any(key == "sts:ExternalId" for _, key in _conditions(statement))
-        if "sts:AssumeRole" in actions and actions & SIDE_ACTIONS:
-            errors.append(
-                f"trust statement {i + 1} merges sts:AssumeRole with {sorted(actions & SIDE_ACTIONS)}: "
-                "AWS refuses those in a statement that requires sts:ExternalId"
-            )
-        if actions == {"sts:AssumeRole"} and _conditions(statement).get(("StringEquals", "sts:ExternalId")) is None:
-            errors.append(f"trust statement {i + 1} allows sts:AssumeRole without the StringEquals sts:ExternalId condition")
-        if actions & SIDE_ACTIONS and external_id:
-            errors.append(f"trust statement {i + 1} puts {sorted(actions & SIDE_ACTIONS)} under sts:ExternalId")
-    assume = [s for s in statements if _actions(s) == {"sts:AssumeRole"}]
-    side = [s for s in statements if _actions(s) == SIDE_ACTIONS]
-    if len(assume) != 1 or len(side) != 1:
-        errors.append("the trust must be one sts:AssumeRole statement and one sts:SetSourceIdentity + sts:TagSession statement")
+    if len(statements) != 1:
+        errors.append(f"the trust has {len(statements)} statements, not 1")
+    other_sts = sorted({a for s in statements for a in _actions(s) if a.lower().startswith("sts:") and a != "sts:AssumeRole"})
+    if other_sts:
+        errors.append(f"the trust allows {other_sts}: it may allow sts:AssumeRole only")
+    for statement in statements:
+        if "sts:AssumeRole" not in _actions(statement):
+            continue
+        conditions = _conditions(statement)
+        if conditions.get(("StringEquals", "sts:ExternalId")) is None:
+            errors.append("the trust statement has no StringEquals sts:ExternalId condition")
+        if conditions.get(("ArnLike", "aws:PrincipalArn")) is None:
+            errors.append("the trust statement has no ArnLike aws:PrincipalArn condition")
     return errors
 
 

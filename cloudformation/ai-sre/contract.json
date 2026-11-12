@@ -77,24 +77,6 @@
             }
           }
         }
-      },
-      {
-        "Sid": "SourceIdentityAndSessionTags",
-        "Effect": "Allow",
-        "Principal": {
-          "AWS": "arn:aws:iam::476114145753:root"
-        },
-        "Action": [
-          "sts:SetSourceIdentity",
-          "sts:TagSession"
-        ],
-        "Condition": {
-          "ArnLike": {
-            "aws:PrincipalArn": {
-              "Fn::Sub": "arn:aws:iam::476114145753:*/better-stack-ai-sre/${BetterStackEnvironment}/*"
-            }
-          }
-        }
       }
     ]
   },

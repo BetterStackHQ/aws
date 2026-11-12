@@ -7,7 +7,7 @@ Description: Better Stack AI SRE - a read-only role Better Stack assumes to inve
 #   - The RoleName expression and the ExternalId pattern never change: a different role name would make an in-place
 #     update replace the role with one Better Stack does not know.
 #   - The tag key BetterStackAiSreTemplateVersion never changes.
-#   - The trust keeps its two statements. Merged into one, AWS refuses sts:SetSourceIdentity and sts:TagSession.
+#   - The trust is one statement allowing sts:AssumeRole alone, with the external ID and the callers' path conditions.
 #   - Better Stack's role session names start with BetterStackAiSre-, and always will.
 # The "latest" copy of this file is fetched when the console opens a setup link and again when the stack is created,
 # so a release that renamed or removed a parameter a link passes, or added one without a default, would fail creates.
@@ -86,6 +86,7 @@ Mappings:
 Conditions:
   HasPermissionsBoundary: !Not [!Equals [!Ref PermissionsBoundaryArn, '']]
   DenyConfigurationValues: !Equals [!Ref AllowConfigurationValues, 'false']
+  HasBetterStackTeam: !Not [!Equals [!Ref BetterStackTeam, '']]
 
 Resources:
   AiSreRole:
@@ -94,13 +95,16 @@ Resources:
       # better-stack-ai-sre-role-<first 8 hex of the external ID's UUID>; Better Stack derives the same name. Never
       # change this expression.
       RoleName: !Join ['', ['better-stack-ai-sre-role-', !Select [3, !Split ['-', !Ref ExternalId]]]]
-      Description: !Sub 'Read-only access for Better Stack AI SRE. Team: ${BetterStackTeam}'
+      Description: !If
+        - HasBetterStackTeam
+        - !Sub 'Read-only access for Better Stack AI SRE. Team: ${BetterStackTeam}'
+        - Read-only access for Better Stack AI SRE.
       PermissionsBoundary: !If [HasPermissionsBoundary, !Ref PermissionsBoundaryArn, !Ref 'AWS::NoValue']
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
-          # Two statements. Never merge them: AWS refuses sts:SetSourceIdentity and sts:TagSession in a statement that
-          # also requires sts:ExternalId.
+          # One statement: sts:AssumeRole alone, only with the external ID and only from Better Stack's AI SRE callers
+          # for the chosen environment. Never add another sts action.
           - Sid: AssumeWithExternalId
             Effect: Allow
             Principal:
@@ -109,17 +113,6 @@ Resources:
             Condition:
               StringEquals:
                 sts:ExternalId: !Ref ExternalId
-              ArnLike:
-                aws:PrincipalArn: !Sub 'arn:aws:iam::476114145753:*/better-stack-ai-sre/${BetterStackEnvironment}/*'
-          # Lets Better Stack set a source identity and session tags on the session above. Grants no access by itself.
-          - Sid: SourceIdentityAndSessionTags
-            Effect: Allow
-            Principal:
-              AWS: 'arn:aws:iam::476114145753:root'
-            Action:
-              - sts:SetSourceIdentity
-              - sts:TagSession
-            Condition:
               ArnLike:
                 aws:PrincipalArn: !Sub 'arn:aws:iam::476114145753:*/better-stack-ai-sre/${BetterStackEnvironment}/*'
       Policies:
@@ -244,7 +237,7 @@ Resources:
                   - iam:ListRolePolicies
                   - iam:GetRolePolicy
                   - iam:ListAttachedRolePolicies
-                Resource: !Join ['', ['arn:aws:iam::', !Ref 'AWS::AccountId', ':role/better-stack-ai-sre-role-', !Select [3, !Split ['-', !Ref ExternalId]]]]
+                Resource: !Join ['', ['arn:', !Ref 'AWS::Partition', ':iam::', !Ref 'AWS::AccountId', ':role/better-stack-ai-sre-role-', !Select [3, !Split ['-', !Ref ExternalId]]]]
               # Log groups encrypted with a customer managed key, read through CloudWatch Logs only.
               - Sid: EncryptedLogs
                 Effect: Allow
@@ -278,8 +271,11 @@ Resources:
                   - dynamodb:BatchGetItem
                   - dynamodb:Query
                   - dynamodb:Scan
+                  - dynamodb:PartiQLSelect
+                  - dynamodb:GetRecords
                   - sqs:ReceiveMessage
                   - kinesis:GetRecords
+                  - kinesis:SubscribeToShard
                   - ec2:GetPasswordData
                   # Returns the tunnels' pre-shared keys.
                   - ec2:DescribeVpnConnections
@@ -334,6 +330,12 @@ Resources:
                     # Stack events carry each resource's properties, and exports carry output values.
                     - cloudformation:DescribeStackEvents
                     - cloudformation:ListExports
+                    # Drift results carry expected and actual property values, stack sets their parameters.
+                    - cloudformation:DescribeStackResourceDrifts
+                    - cloudformation:ListStackInstanceResourceDrifts
+                    - cloudformation:DescribeStackSet
+                    - cloudformation:DescribeStackInstance
+                    - eks:DescribeAddon
                     - events:ListTargetsByRule
                     - firehose:DescribeDeliveryStream
                   Resource: '*'

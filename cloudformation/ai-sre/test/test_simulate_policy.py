@@ -23,6 +23,7 @@ DENIED_IN_EVERY_SETTING = [
     "s3:GetObject", "secretsmanager:GetSecretValue", "ssm:GetParameter", "lambda:GetFunction", "lambda:InvokeFunction",
     "dynamodb:GetItem", "dynamodb:BatchGetItem", "dynamodb:Query", "dynamodb:Scan", "sqs:ReceiveMessage",
     "kinesis:GetRecords", "ec2:GetPasswordData", "ec2:DescribeVpnConnections", "logs:Unmask",
+    "dynamodb:PartiQLSelect", "dynamodb:GetRecords", "kinesis:SubscribeToShard",
 ]
 DENIED_API_GATEWAY_PATHS = ["/apikeys", "/apikeys/key123", "/usageplans/plan123/keys", "/usageplans/plan123/keys/key123"]
 DENIED_WITHOUT_CONFIGURATION_VALUES = [
@@ -31,7 +32,9 @@ DENIED_WITHOUT_CONFIGURATION_VALUES = [
     "ec2:DescribeInstanceAttribute", "ec2:DescribeLaunchTemplateVersions", "ec2:DescribeSpotFleetRequests",
     "autoscaling:DescribeLaunchConfigurations", "cloudformation:DescribeStacks", "cloudformation:DescribeChangeSet",
     "cloudformation:DescribeStackEvents", "cloudformation:ListExports", "events:ListTargetsByRule",
-    "firehose:DescribeDeliveryStream",
+    "firehose:DescribeDeliveryStream", "cloudformation:DescribeStackResourceDrifts",
+    "cloudformation:ListStackInstanceResourceDrifts", "cloudformation:DescribeStackSet",
+    "cloudformation:DescribeStackInstance", "eks:DescribeAddon",
 ]
 STAGE_PATHS = ["/restapis/abc123/stages", "/restapis/abc123/stages/prod", "/apis/abc123/stages", "/apis/abc123/stages/prod"]
 # Readable in both settings: the investigation reads, the self-read, the MCP token, and the one Spot read that
@@ -67,7 +70,7 @@ NO_VALUE = object()
 
 def statements(allow_configuration_values):
     template = cfn_yaml.load(check_contract.DEFAULT_TEMPLATE)
-    refs = {"AWS::AccountId": ACCOUNT, "ExternalId": EXTERNAL_ID, "AWS::NoValue": NO_VALUE}
+    refs = {"AWS::AccountId": ACCOUNT, "AWS::Partition": "aws", "ExternalId": EXTERNAL_ID, "AWS::NoValue": NO_VALUE}
     conditions = {"DenyConfigurationValues": not allow_configuration_values}
     policies = resolve(template["Resources"]["AiSreRole"]["Properties"]["Policies"], refs, conditions)
     return [s for policy in policies for s in policy["PolicyDocument"]["Statement"]]

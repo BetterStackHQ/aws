@@ -17,14 +17,20 @@ LAST_PARAMETER = """  PermissionsBoundaryArn:
     Default: ''
 """
 
-MERGED_TRUST = """          - Sid: AssumeWithExternalId
+SECOND_STATEMENT = """          - Sid: SourceIdentityAndSessionTags
             Effect: Allow
             Principal:
               AWS: 'arn:aws:iam::476114145753:root'
             Action:
-              - sts:AssumeRole
               - sts:SetSourceIdentity
               - sts:TagSession
+            Condition:
+              ArnLike:
+                aws:PrincipalArn: !Sub 'arn:aws:iam::476114145753:*/better-stack-ai-sre/${BetterStackEnvironment}/*'
+"""
+
+PATH_CONDITION = """              ArnLike:
+                aws:PrincipalArn: !Sub 'arn:aws:iam::476114145753:*/better-stack-ai-sre/${BetterStackEnvironment}/*'
 """
 
 
@@ -100,20 +106,23 @@ class ContractTest(unittest.TestCase):
             "the role has no tag BetterStackAiSreTemplateVersion",
         )
 
-    def test_merged_trust_statements_fail(self):
-        start = TEMPLATE.index("          - Sid: AssumeWithExternalId")
-        end = TEMPLATE.index("      Policies:")
-        merged = MERGED_TRUST + TEMPLATE[TEMPLATE.index("            Condition:", start):TEMPLATE.index("          # Lets Better Stack", start)]
-        code, out = run(TEMPLATE[:start] + merged + TEMPLATE[end:])
-        self.assertEqual(code, 1, out)
-        self.assertIn("the trust has 1 statements, not 2", out)
-        self.assertIn("trust statement 1 merges sts:AssumeRole with ['sts:SetSourceIdentity', 'sts:TagSession']", out)
+    def test_a_second_trust_statement_fails(self):
+        self.assertFails(replace("      Policies:\n", SECOND_STATEMENT + "      Policies:\n"), "the trust has 2 statements, not 1")
+
+    def test_another_sts_action_in_the_trust_fails(self):
+        self.assertFails(
+            replace("            Action: sts:AssumeRole\n", "            Action:\n              - sts:AssumeRole\n              - sts:TagSession\n"),
+            "the trust allows ['sts:TagSession']: it may allow sts:AssumeRole only",
+        )
 
     def test_dropping_the_external_id_condition_fails(self):
         self.assertFails(
             replace("              StringEquals:\n                sts:ExternalId: !Ref ExternalId\n", ""),
-            "trust statement 1 allows sts:AssumeRole without the StringEquals sts:ExternalId condition",
+            "the trust statement has no StringEquals sts:ExternalId condition",
         )
+
+    def test_dropping_the_caller_path_condition_fails(self):
+        self.assertFails(replace(PATH_CONDITION, ""), "the trust statement has no ArnLike aws:PrincipalArn condition")
 
     def test_a_template_release_yml_cannot_stamp_fails(self):
         self.assertFails(

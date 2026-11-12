@@ -1,7 +1,7 @@
 name: "E2E AI SRE"
 
 # Deploys cloudformation/ai-sre/better-stack-ai-sre.yaml from the checkout the way a customer does, checks the role it
-# makes (name, version tag, description, two-statement trust), asserts every allowed read and every explicit deny with
+# makes (name, version tag, description, one-statement trust), asserts every allowed read and every explicit deny with
 # IAM's policy simulator (cloudformation/ai-sre/test/simulate_policy.py), updates the stack in place to
 # AllowConfigurationValues=false, checks the role kept its ID and runs the simulator again, then deletes the stack.
 # Nothing assumes the role: it trusts only Better Stack's account.
@@ -72,7 +72,7 @@ jobs:
 
       - name: "[Setup] AWS credentials (OIDC)"
         if: ${{ steps.aws.outputs.enabled == 'true' }}
-        uses: aws-actions/configure-aws-credentials@v6
+        uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: ${{ env.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
@@ -119,7 +119,7 @@ jobs:
           echo "ROLE_ARN=$ROLE_ARN" >> "$GITHUB_ENV"
           echo "deployed $ROLE_ARN"
 
-      - name: "[Test] The role has the contract's name, version tag, description and two-statement trust"
+      - name: "[Test] The role has the contract's name, version tag, description and one-statement trust"
         if: ${{ steps.aws.outputs.enabled == 'true' }}
         run: |
           aws iam get-role --role-name "$EXPECTED_ROLE_NAME" --output json > role.json
@@ -128,9 +128,11 @@ jobs:
           [ "$(jq -r '.Role.Arn' role.json)" = "$ROLE_ARN" ] || fail "the stack output $ROLE_ARN is not role $EXPECTED_ROLE_NAME"
           [ "$(jq -r '.Role.Tags[] | select(.Key == "BetterStackAiSreTemplateVersion") | .Value' role.json)" = "$RUN_ID" ] || fail "the role's BetterStackAiSreTemplateVersion tag is not $RUN_ID"
           [ "$(jq -r '.Role.Description' role.json)" = "Read-only access for Better Stack AI SRE. Team: E2E test ($RUN_ID)" ] || fail "unexpected description: $(jq -r '.Role.Description' role.json)"
-          jq -e '.Role.AssumeRolePolicyDocument.Statement | length == 2' role.json >/dev/null || fail "the trust does not have two statements"
-          jq -e '[.Role.AssumeRolePolicyDocument.Statement[] | .Action | if type == "string" then [.] else . end | sort] == [["sts:AssumeRole"], ["sts:SetSourceIdentity", "sts:TagSession"]]' role.json >/dev/null \
-            || fail "the trust is not sts:AssumeRole, then sts:SetSourceIdentity + sts:TagSession"
+          jq -e '.Role.AssumeRolePolicyDocument.Statement | length == 1' role.json >/dev/null || fail "the trust does not have exactly one statement"
+          jq -e '.Role.AssumeRolePolicyDocument.Statement[0].Action | if type == "string" then [.] else . end == ["sts:AssumeRole"]' role.json >/dev/null \
+            || fail "the trust allows more than sts:AssumeRole"
+          jq -e '.Role.AssumeRolePolicyDocument.Statement[0].Condition.StringEquals | has("sts:ExternalId")' role.json >/dev/null \
+            || fail "the trust does not require the external ID"
           jq -e '.Role.AssumeRolePolicyDocument.Statement[0].Condition.ArnLike["aws:PrincipalArn"] == "arn:aws:iam::476114145753:*/better-stack-ai-sre/production/*"' role.json >/dev/null \
             || fail "the trust does not pin the production callers"
           echo "role $EXPECTED_ROLE_NAME: version tag, description and trust as expected"
