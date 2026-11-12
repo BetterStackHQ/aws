@@ -4,13 +4,15 @@
 
 See the [main README](../../README.md) for the rest of this repository.
 
-## Deploy
+## Quick Start
 
 Better Stack gives you a link that opens the AWS console's quick-create page with this template and your parameters filled in. Review the stack there, acknowledge that it creates a named IAM role, and create it. Better Stack finds the role by itself; there is nothing to paste back.
 
-The latest release is published at `https://better-stack-cloudformation.s3.amazonaws.com/better-stack-ai-sre.yaml`, and every release at `https://better-stack-cloudformation.s3.amazonaws.com/<version>/better-stack-ai-sre.yaml`, which is never overwritten. You can deploy either one yourself:
+The latest release is published at `https://better-stack-cloudformation.s3.amazonaws.com/better-stack-ai-sre.yaml`, and every release at `https://better-stack-cloudformation.s3.amazonaws.com/<version>/better-stack-ai-sre.yaml`, which is never overwritten. You can download either one and deploy it yourself:
 
 ```bash
+curl -fsSLO https://better-stack-cloudformation.s3.amazonaws.com/better-stack-ai-sre.yaml
+
 aws cloudformation deploy \
   --template-file better-stack-ai-sre.yaml \
   --stack-name betterstack-ai-sre-XXXXXXXX \
@@ -22,9 +24,15 @@ The stack can be deployed in any region; IAM roles are global.
 
 ## What it creates
 
-One IAM role, `better-stack-ai-sre-role-<8 hex>`, where `<8 hex>` is the first eight hex digits after `bs-ai-sre-` in the external ID. It's tagged `Solution: BetterStack` and `BetterStackAiSreTemplateVersion: <release>`, the release of this template that made it. The stack output `IntegrationRoleArn` is its ARN.
+One IAM role, `better-stack-ai-sre-role-<8 hex>`, where `<8 hex>` is the first eight hex digits after `bs-ai-sre-` in the external ID. It's tagged `Solution: BetterStack` and `BetterStackAiSreTemplateVersion: <release>`, the release of this template that made it.
 
 Only Better Stack's AI SRE callers for the chosen environment can assume the role, and only with the external ID Better Stack generated for your integration.
+
+## Stack Outputs
+
+| Output | Description |
+|--------|-------------|
+| `IntegrationRoleArn` | The role Better Stack AI SRE assumes. Nothing to copy: Better Stack finds it. |
 
 ## Parameters
 
@@ -46,7 +54,7 @@ The role reads configuration and telemetry. Secret stores, data-plane reads and 
 - Load balancers, API Gateway configuration and Route 53 zones
 - SQS, SNS, Kinesis and Firehose metadata; Step Functions and EventBridge
 - CloudTrail trails and event history (`LookupEvents`), AWS Health events, X-Ray traces
-- CloudFormation stacks and stack events (stack events are denied with `AllowConfigurationValues=false`), Application Auto Scaling, the account alias and enabled regions
+- CloudFormation stacks, their resources and stack events (with `AllowConfigurationValues=false` only the list of stacks and their resources), Application Auto Scaling, the account alias and enabled regions
 - Its own role and policies (`iam:GetRole` and the policy reads on its own ARN only), to tell which release it runs
 - `signin:CreateOAuth2Token` for AWS's MCP Server, which Better Stack calls with the role's session
 - `kms:Decrypt` only through CloudWatch Logs, for log groups encrypted with your key
@@ -68,19 +76,19 @@ Lambda decrypts a function's environment variables as the caller, so Lambda is e
 
 ### Configuration values
 
-Read-only isn't secret-free. With `AllowConfigurationValues=true`, the default, the role can read Lambda, ECS and Batch environment variables, EC2 and Auto Scaling user data, CloudFormation parameters that aren't `NoEcho`, outputs and the resource properties in stack events, drift results and stack sets, EventBridge target inputs, API Gateway stage variables, Firehose destination settings and EKS add-on configuration values. These are often where a misconfiguration shows.
+Read-only isn't secret-free. With `AllowConfigurationValues=true`, the default, the role can read Lambda, ECS and Batch environment variables, EC2, Spot and Auto Scaling user data, CloudFormation parameters that aren't `NoEcho`, outputs and the resource properties in stack events, drift results and stack sets, EventBridge target inputs, API Gateway stage variables, Firehose destination settings (for a Splunk destination that includes the HEC token, unless the stream reads it from Secrets Manager) and EKS add-on configuration values. These are often where a misconfiguration shows.
 
 With `AllowConfigurationValues=false`, the stack attaches a deny on every read Better Stack knows returns them:
 
-`lambda:ListFunctions`, `lambda:ListVersionsByFunction`, `lambda:GetFunctionConfiguration`, `ecs:DescribeTaskDefinition`, `ecs:DescribeTasks`, `batch:DescribeJobDefinitions`, `batch:DescribeJobs`, `ec2:DescribeInstanceAttribute`, `ec2:DescribeLaunchTemplateVersions`, `ec2:DescribeSpotFleetRequests`, `autoscaling:DescribeLaunchConfigurations`, `cloudformation:DescribeStacks`, `cloudformation:DescribeChangeSet`, `cloudformation:DescribeStackEvents`, `cloudformation:ListExports`, `cloudformation:DescribeStackResourceDrifts`, `cloudformation:ListStackInstanceResourceDrifts`, `cloudformation:DescribeStackSet`, `cloudformation:DescribeStackInstance`, `eks:DescribeAddon`, `events:ListTargetsByRule`, `firehose:DescribeDeliveryStream`, and API Gateway stages (`/restapis/*/stages*`, `/apis/*/stages*`).
+`lambda:ListFunctions`, `lambda:ListVersionsByFunction`, `lambda:GetFunctionConfiguration`, `ecs:DescribeTaskDefinition`, `ecs:DescribeTasks`, `batch:DescribeJobDefinitions`, `batch:DescribeJobs`, `ec2:DescribeInstanceAttribute`, `ec2:DescribeLaunchTemplateVersions`, `ec2:DescribeSpotFleetRequests`, `ec2:DescribeSpotInstanceRequests`, `autoscaling:DescribeLaunchConfigurations`, `cloudformation:DescribeStacks`, `cloudformation:DescribeChangeSet`, `cloudformation:DescribeStackEvents`, `cloudformation:DescribeEvents`, `cloudformation:ListExports`, `cloudformation:DescribeStackResourceDrifts`, `cloudformation:ListStackInstanceResourceDrifts`, `cloudformation:DescribeStackSet`, `cloudformation:DescribeStackInstance`, `eks:DescribeAddon`, `events:ListTargetsByRule`, `firehose:DescribeDeliveryStream`, and API Gateway stages (`/restapis/*/stages*`, `/apis/*/stages*`).
 
-AI SRE then can't see configuration changes in those services, or a stack's deployment history: stack events carry each resource's properties. A later release that adds a read to this list is a fix to the same rule.
+AI SRE then can't see configuration changes in those services, or a stack's deployment history: stack events carry each resource's properties. CloudTrail event history stays readable in both settings, and the request parameters AWS records there for some calls can include configuration values. A later release that adds a read to this list is a fix to the same rule.
 
 ## Upgrade
 
 A stack's policy changes only when you update it. To move to the latest release, open the stack in the CloudFormation console, choose **Update stack**, **Replace existing template**, give the template URL `https://better-stack-cloudformation.s3.amazonaws.com/better-stack-ai-sre.yaml`, and keep the parameters. The role keeps its name and ARN. If an update fails, delete the stack and deploy it again from Better Stack: the stack, the role and the external ID come out the same.
 
-## Remove
+## Cleanup
 
 Delete the stack. That deletes the role, and Better Stack can no longer read anything in the account.
 
@@ -114,3 +122,7 @@ python -m unittest -v
 pip install boto3
 python simulate_policy.py --role-arn arn:aws:iam::<account>:role/better-stack-ai-sre-role-<8 hex> --allow-configuration-values true
 ```
+
+## Support
+
+For issues or questions, please reach out at hello@betterstack.com

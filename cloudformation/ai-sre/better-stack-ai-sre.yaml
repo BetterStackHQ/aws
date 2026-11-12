@@ -324,11 +324,13 @@ Resources:
                     - ec2:DescribeInstanceAttribute
                     - ec2:DescribeLaunchTemplateVersions
                     - ec2:DescribeSpotFleetRequests
+                    - ec2:DescribeSpotInstanceRequests
                     - autoscaling:DescribeLaunchConfigurations
                     - cloudformation:DescribeStacks
                     - cloudformation:DescribeChangeSet
                     # Stack events carry each resource's properties, and exports carry output values.
                     - cloudformation:DescribeStackEvents
+                    - cloudformation:DescribeEvents
                     - cloudformation:ListExports
                     # Drift results carry expected and actual property values, stack sets their parameters.
                     - cloudformation:DescribeStackResourceDrifts

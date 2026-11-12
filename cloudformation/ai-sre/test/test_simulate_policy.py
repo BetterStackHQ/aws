@@ -30,6 +30,7 @@ DENIED_WITHOUT_CONFIGURATION_VALUES = [
     "lambda:ListFunctions", "lambda:ListVersionsByFunction", "lambda:GetFunctionConfiguration",
     "ecs:DescribeTaskDefinition", "ecs:DescribeTasks", "batch:DescribeJobDefinitions", "batch:DescribeJobs",
     "ec2:DescribeInstanceAttribute", "ec2:DescribeLaunchTemplateVersions", "ec2:DescribeSpotFleetRequests",
+    "ec2:DescribeSpotInstanceRequests", "cloudformation:DescribeEvents",
     "autoscaling:DescribeLaunchConfigurations", "cloudformation:DescribeStacks", "cloudformation:DescribeChangeSet",
     "cloudformation:DescribeStackEvents", "cloudformation:ListExports", "events:ListTargetsByRule",
     "firehose:DescribeDeliveryStream", "cloudformation:DescribeStackResourceDrifts",
@@ -37,13 +38,11 @@ DENIED_WITHOUT_CONFIGURATION_VALUES = [
     "cloudformation:DescribeStackInstance", "eks:DescribeAddon",
 ]
 STAGE_PATHS = ["/restapis/abc123/stages", "/restapis/abc123/stages/prod", "/apis/abc123/stages", "/apis/abc123/stages/prod"]
-# Readable in both settings: the investigation reads, the self-read, the MCP token, and the one Spot read that
-# returns no user data.
+# Readable in both settings: the investigation reads, the self-read and the MCP token.
 ALLOWED_IN_EVERY_SETTING = [
     "cloudwatch:DescribeAlarms", "logs:StartQuery", "logs:StopQuery", "cloudtrail:LookupEvents",
     "xray:GetTraceSummaries", "xray:BatchGetTraces", "cloudformation:DescribeStackResources", "cloudformation:ListStacks",
     "application-autoscaling:DescribeScalableTargets", "iam:ListAccountAliases", "account:ListRegions",
-    "ec2:DescribeSpotInstanceRequests",
 ]
 NEVER_ALLOWED = ["logs:TestMetricFilter", "signin:AuthorizeOAuth2Access"]
 
