@@ -280,6 +280,9 @@ Resources:
                   # Returns the tunnels' pre-shared keys.
                   - ec2:DescribeVpnConnections
                   - logs:Unmask
+                  # CloudWatch Omni's GetSpaceCredentials, GetSpaceCredentialsForOrganization and GetSpaceDataAccess hand
+                  # out temporary credentials of a space's own role, which these denies don't bind.
+                  - cloudwatch:GetSpace*
                 Resource: '*'
               - Sid: DenyApiKeys
                 Effect: Deny
@@ -319,8 +322,13 @@ Resources:
                     - lambda:GetFunctionConfiguration
                     - ecs:DescribeTaskDefinition
                     - ecs:DescribeTasks
+                    - ecs:DescribeExpressGatewayService
+                    - ecs:DescribeDaemonTaskDefinition
                     - batch:DescribeJobDefinitions
                     - batch:DescribeJobs
+                    # A service job's request, such as a SageMaker training job's environment and hyperparameters.
+                    - batch:DescribeServiceJob
+                    - lambda:ListMicrovmImageVersions
                     - ec2:DescribeInstanceAttribute
                     - ec2:DescribeLaunchTemplateVersions
                     - ec2:DescribeSpotFleetRequests
@@ -328,6 +336,8 @@ Resources:
                     - autoscaling:DescribeLaunchConfigurations
                     - cloudformation:DescribeStacks
                     - cloudformation:DescribeChangeSet
+                    # A resource's Metadata (such as AWS::CloudFormation::Init), which NoEcho does not mask.
+                    - cloudformation:DescribeStackResource
                     # Stack events carry each resource's properties, and exports carry output values.
                     - cloudformation:DescribeStackEvents
                     - cloudformation:DescribeEvents

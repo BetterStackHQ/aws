@@ -24,6 +24,7 @@ DENIED_IN_EVERY_SETTING = [
     "dynamodb:GetItem", "dynamodb:BatchGetItem", "dynamodb:Query", "dynamodb:Scan", "sqs:ReceiveMessage",
     "kinesis:GetRecords", "ec2:GetPasswordData", "ec2:DescribeVpnConnections", "logs:Unmask",
     "dynamodb:PartiQLSelect", "dynamodb:GetRecords", "kinesis:SubscribeToShard",
+    "cloudwatch:GetSpaceCredentials", "cloudwatch:GetSpaceCredentialsForOrganization", "cloudwatch:GetSpaceDataAccess",
 ]
 DENIED_API_GATEWAY_PATHS = ["/apikeys", "/apikeys/key123", "/usageplans/plan123/keys", "/usageplans/plan123/keys/key123"]
 DENIED_WITHOUT_CONFIGURATION_VALUES = [
@@ -36,6 +37,8 @@ DENIED_WITHOUT_CONFIGURATION_VALUES = [
     "firehose:DescribeDeliveryStream", "cloudformation:DescribeStackResourceDrifts",
     "cloudformation:ListStackInstanceResourceDrifts", "cloudformation:DescribeStackSet",
     "cloudformation:DescribeStackInstance", "eks:DescribeAddon",
+    "ecs:DescribeExpressGatewayService", "ecs:DescribeDaemonTaskDefinition", "batch:DescribeServiceJob",
+    "lambda:ListMicrovmImageVersions", "cloudformation:DescribeStackResource",
 ]
 STAGE_PATHS = ["/restapis/abc123/stages", "/restapis/abc123/stages/prod", "/apis/abc123/stages", "/apis/abc123/stages/prod"]
 # Readable in both settings: the investigation reads, the self-read and the MCP token.
