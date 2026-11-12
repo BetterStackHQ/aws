@@ -212,6 +212,22 @@ class SimulatePolicyTest(unittest.TestCase):
             self.assertEqual(expected(action, sim.SELF), [(sim.ALLOW, sim.ALLOW)], action)
             self.assertEqual(expected(action, sim.OTHER_ROLE), [(sim.NONE, sim.NONE)], action)
 
+    def test_every_deny_in_the_template_has_a_check(self):
+        # A deny added to the template without a CHECKS entry would never reach the policy simulator.
+        checks = [(a, sim.fill(r, ROLE_ARN, "us-east-1"), t, f) for a, r, _, t, f in sim.CHECKS]
+        missing = []
+        for statement in statements(allow_configuration_values=False):
+            if statement["Effect"] != "Deny":
+                continue
+            for action in as_list(statement["Action"]):
+                for resource in as_list(statement["Resource"]):
+                    if not any(
+                        glob(action, a, ignore_case=True) and glob(resource, r) and sim.DENY in (t, f)
+                        for a, r, t, f in checks
+                    ):
+                        missing.append(f"{statement['Sid']}: {action} on {resource}")
+        self.assertEqual(missing, [], "denies without a CHECKS entry in simulate_policy.py expecting explicitDeny")
+
     def test_a_role_arn_is_required(self):
         with self.assertRaises(ValueError):
             sim.parse_role_arn("arn:aws:iam::123456789012:user/someone")

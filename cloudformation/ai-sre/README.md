@@ -38,7 +38,7 @@ Only Better Stack's AI SRE callers for the chosen environment can assume the rol
 
 ## What the role can read
 
-The role reads configuration and telemetry, never data or secrets:
+The role reads configuration and telemetry. Secret stores, data-plane reads and API keys are denied (see [What the role can't read](#what-the-role-cant-read)). Configuration values such as environment variables are readable unless you deploy with `AllowConfigurationValues=false` (see [Configuration values](#configuration-values)). It can read:
 
 - CloudWatch alarms, metrics and log events, and Logs Insights queries
 - EC2, Auto Scaling, ECS, EKS, Batch and Lambda descriptions
