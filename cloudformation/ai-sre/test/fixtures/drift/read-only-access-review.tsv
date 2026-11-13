@@ -1,0 +1,8 @@
+# ReadOnlyAccess v7
+# service reference read 2026-11-12
+alpha:DescribeThing	allowed
+alpha:GetSecretValue	denied	the secret itself
+alpha:GetThing	allowed
+alpha:ListThings	allowed
+beta:DescribeWidget	allowed
+beta:GetWidget	configuration-value	the widget settings

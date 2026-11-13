@@ -7,7 +7,7 @@ name: "E2E"
 # them back through the team's SQL API connection with exact row counts (the amounts are the LOG_EVENTS, TRACES and
 # METRIC_SERIES below: enough invocations and payload for the tag enrichment Lambdas to be measured). Pull requests and pushes to main deploy the
 # template from the checkout, with the Lambda zips built from it uploaded to a bucket of the run's own under the run id;
-# the daily schedule deploys the published template and fails when it differs from the newest release's. Everything the run creates in AWS and Better Stack is named after
+# the daily schedule deploys the published template and fails when it, or the published AI SRE template, differs from the newest release's. Everything the run creates in AWS and Better Stack is named after
 # RUN_ID and deleted in the cleanup step, together with leftovers of earlier runs. Within an hour of the previous run's
 # stack deletion, the static group, aws/spans and CloudTrail delivering nothing is a warning instead of a failure (see
 # the step that measures it). The docs check fails when the docs article stops naming a template toggle or output.
@@ -51,6 +51,7 @@ env:
   API: https://telemetry.betterstack.com
   DOCS_URL: https://betterstack.com/docs/logs/aws-cloudformation/
   PUBLISHED_TEMPLATE_URL: https://better-stack-cloudformation.s3.amazonaws.com/better-stack-full.yaml
+  PUBLISHED_AI_SRE_TEMPLATE_URL: https://better-stack-cloudformation.s3.amazonaws.com/better-stack-ai-sre.yaml
   TEMPLATE_URL_OVERRIDE: ${{ inputs.template_url }}
   RUN_ID: gh${{ github.run_id }}a${{ github.run_attempt }}
   SOURCE_PREFIX: e2e-aws-stack
@@ -99,7 +100,7 @@ jobs:
       - name: "[Setup] Checkout code"
         uses: actions/checkout@v7
 
-      - name: "[Check] Pick the template, docs article names every toggle and output, published template vs the newest release"
+      - name: "[Check] Pick the template, docs article names every toggle and output, published templates vs the newest release"
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -127,6 +128,19 @@ jobs:
               exit 1
             fi
             echo "published template is the one of $EXPECTED_FROM"
+            # The AI SRE template is a release asset from the first release that carries it on, published next to this one.
+            if [ -n "$TAG" ] && gh release view "$TAG" -R "${{ github.repository }}" --json assets --jq '.assets[].name' | grep -qx better-stack-ai-sre.yaml; then
+              gh release download "$TAG" -R "${{ github.repository }}" -p better-stack-ai-sre.yaml -O ai-sre-release.yaml
+              curl -sSfL "$PUBLISHED_AI_SRE_TEMPLATE_URL" -o ai-sre-published.yaml || { echo "::error::$PUBLISHED_AI_SRE_TEMPLATE_URL could not be fetched, though release $TAG carries better-stack-ai-sre.yaml"; exit 1; }
+              if ! diff -q ai-sre-published.yaml ai-sre-release.yaml >/dev/null; then
+                echo "::error::$PUBLISHED_AI_SRE_TEMPLATE_URL differs from the template of release $TAG: the latest copy was not updated after the release"
+                diff ai-sre-published.yaml ai-sre-release.yaml | head -40
+                exit 1
+              fi
+              echo "published AI SRE template is the one of release $TAG"
+            else
+              echo "release ${TAG:-none} carries no better-stack-ai-sre.yaml, so there is no published AI SRE template to compare"
+            fi
           fi
           TOGGLES=$(awk '/^Parameters:/{p=1;next} /^[A-Z][A-Za-z]*:/{p=0} p && /^  [A-Za-z]+:$/{name=substr($1,1,length($1)-1)} p && /^      - .false.$/{print name}' template.yaml | sort -u)
           OUTPUTS=$(awk '/^Outputs:/{p=1;next} p && /^  [A-Za-z]+:$/{print substr($1,1,length($1)-1)}' template.yaml)

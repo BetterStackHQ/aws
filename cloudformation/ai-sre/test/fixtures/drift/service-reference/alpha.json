@@ -1,0 +1,1 @@
+{"Name": "alpha", "Actions": [{"Name": "DescribeThing"}, {"Name": "GetSecretValue"}, {"Name": "GetThing"}, {"Name": "ListThings"}, {"Name": "PutThing"}]}

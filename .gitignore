@@ -8,3 +8,6 @@ lambda/target/
 lambda/.cache/
 # Lambda zips built by lambda/build.sh
 lambda/dist/
+
+# Python bytecode of cloudformation/ai-sre/test
+__pycache__/
