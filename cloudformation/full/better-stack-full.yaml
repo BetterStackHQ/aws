@@ -182,7 +182,6 @@ Resources:
                 Action:
                   - logs:PutLogEvents
                   - logs:CreateLogStream
-                  - logs:CreateLogGroup
                 Resource:
                   - !Sub 'arn:aws:logs:*:${AWS::AccountId}:log-group:/aws/kinesisfirehose/better-stack-*:*'
       Tags:
