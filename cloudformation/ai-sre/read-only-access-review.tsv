@@ -2206,7 +2206,7 @@ dms:DescribeCertificates	allowed
 dms:DescribeConnections	allowed
 dms:DescribeConversionConfiguration	allowed
 dms:DescribeDataMigrations	allowed
-dms:DescribeEndpoints	denied	endpoint passwords
+dms:DescribeEndpoints	allowed
 dms:DescribeEndpointSettings	allowed
 dms:DescribeEndpointTypes	allowed
 dms:DescribeEngineVersions	allowed

@@ -317,7 +317,7 @@ CHECKS = [
         "connect:ListContactReferences", "ec2:DescribeIpamExternalResourceVerificationTokens",
         "ec2:DescribeVerifiedAccessTrustProviders", "grafana:DescribeWorkspace", "grafana:ListWorkspaces",
         "kms:GetParametersForImport", "lightsail:GetRelationalDatabase", "lightsail:GetRelationalDatabases",
-        "medialive:DescribeInputDeviceThumbnail", "rds:DescribeTenantDatabases", "dms:DescribeEndpoints",
+        "medialive:DescribeInputDeviceThumbnail", "rds:DescribeTenantDatabases",
         "ds:DescribeDirectories",
     ]],
     # Content like logs, readable with true only: whatever was pasted into a Support case, and command output.
