@@ -237,6 +237,9 @@ jobs:
           if ! aws cloudformation wait stack-create-complete --stack-name "$STACK_NAME"; then
             echo "::error::stack creation failed: $(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --query 'Stacks[0].StackStatus' --output text)"
             aws cloudformation describe-stack-events --stack-name "$STACK_NAME" --query "StackEvents[?ends_with(ResourceStatus, 'FAILED')].[LogicalResourceId,ResourceStatus,ResourceStatusReason]" --output table
+            # The stack events only say "Validation failed with N error(s)" when the pre-deployment validation fails.
+            aws cloudformation describe-events --stack-name "$STACK_NAME" --filters FailedEvents=true \
+              --query "OperationEvents[?EventType=='VALIDATION_ERROR'].[LogicalResourceId,ResourceType,ValidationName,ValidationPath,ValidationStatusReason]" --output table
             exit 1
           fi
           OUTPUTS=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --query 'Stacks[0].Outputs' --output json)
