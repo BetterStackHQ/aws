@@ -1138,7 +1138,7 @@ cloudformation:EstimateTemplateCost	allowed
 cloudformation:GetGeneratedTemplate	configuration-value
 cloudformation:GetHookResult	allowed
 cloudformation:GetResource	configuration-value
-cloudformation:GetResourceRequestStatus	allowed
+cloudformation:GetResourceRequestStatus	configuration-value
 cloudformation:GetStackPolicy	allowed
 cloudformation:GetTemplate	configuration-value
 cloudformation:GetTemplateSummary	allowed
@@ -1148,7 +1148,7 @@ cloudformation:ListExports	configuration-value
 cloudformation:ListGeneratedTemplates	allowed
 cloudformation:ListHookResults	allowed
 cloudformation:ListImports	allowed
-cloudformation:ListResourceRequests	allowed
+cloudformation:ListResourceRequests	configuration-value
 cloudformation:ListResources	configuration-value
 cloudformation:ListResourceScanRelatedResources	allowed
 cloudformation:ListResourceScanResources	allowed
@@ -1432,10 +1432,10 @@ codecommit:GetApprovalRuleTemplate	allowed
 codecommit:GetBlob	denied
 codecommit:GetBlobDifferences	denied
 codecommit:GetBranch	allowed
-codecommit:GetComment	allowed
+codecommit:GetComment	denied
 codecommit:GetCommentReactions	allowed
-codecommit:GetCommentsForComparedCommit	allowed
-codecommit:GetCommentsForPullRequest	allowed
+codecommit:GetCommentsForComparedCommit	denied
+codecommit:GetCommentsForPullRequest	denied
 codecommit:GetCommit	allowed
 codecommit:GetCommitHistory	allowed
 codecommit:GetCommitsFromMergeBase	allowed
@@ -1808,7 +1808,7 @@ connect:ListContactFlowModules	allowed
 connect:ListContactFlowModuleVersions	allowed
 connect:ListContactFlows	allowed
 connect:ListContactFlowVersions	allowed
-connect:ListContactReferences	allowed
+connect:ListContactReferences	denied
 connect:ListDataTableAttributes	allowed
 connect:ListDataTablePrimaryValues	denied
 connect:ListDataTables	allowed
@@ -2420,7 +2420,7 @@ ec2:DescribeInstanceTypeOfferings	allowed
 ec2:DescribeInstanceTypes	allowed
 ec2:DescribeInternetGateways	allowed
 ec2:DescribeIpamByoasn	allowed
-ec2:DescribeIpamExternalResourceVerificationTokens	allowed
+ec2:DescribeIpamExternalResourceVerificationTokens	denied
 ec2:DescribeIpamInternetRegistryAssociations	allowed
 ec2:DescribeIpamPolicies	allowed
 ec2:DescribeIpamPoolAllocations	allowed
@@ -2515,7 +2515,7 @@ ec2:DescribeVerifiedAccessGroups	allowed
 ec2:DescribeVerifiedAccessInstanceLoggingConfigurations	allowed
 ec2:DescribeVerifiedAccessInstances	allowed
 ec2:DescribeVerifiedAccessInstanceWebAclAssociations	allowed
-ec2:DescribeVerifiedAccessTrustProviders	allowed
+ec2:DescribeVerifiedAccessTrustProviders	denied
 ec2:DescribeVolumeAttribute	allowed
 ec2:DescribeVolumes	allowed
 ec2:DescribeVolumesModifications	allowed
@@ -3245,13 +3245,13 @@ glue:ListTriggers	allowed
 glue:ListWorkflows	allowed
 glue:QuerySchemaVersionMetadata	allowed
 glue:SearchTables	allowed
-grafana:DescribeWorkspace	allowed
+grafana:DescribeWorkspace	denied
 grafana:DescribeWorkspaceAuthentication	allowed
 grafana:DescribeWorkspaceConfiguration	allowed
 grafana:ListPermissions	allowed
 grafana:ListTagsForResource	allowed
 grafana:ListVersions	allowed
-grafana:ListWorkspaces	allowed
+grafana:ListWorkspaces	denied
 greengrass:DescribeComponent	allowed
 greengrass:GetAssociatedRole	allowed
 greengrass:GetBulkDeploymentStatus	allowed
@@ -3635,7 +3635,7 @@ iot:DescribeTunnel	allowed
 iot:GetBehaviorModelTrainingSummaries	allowed
 iot:GetBucketsAggregation	allowed
 iot:GetCardinality	allowed
-iot:GetCommand	allowed
+iot:GetCommand	configuration-value
 iot:GetCommandExecution	allowed
 iot:GetConnection	allowed
 iot:GetEffectivePolicies	allowed
@@ -4031,7 +4031,7 @@ kms:DescribeKey	allowed
 kms:GetKeyLastUsage	allowed
 kms:GetKeyPolicy	allowed
 kms:GetKeyRotationStatus	allowed
-kms:GetParametersForImport	allowed
+kms:GetParametersForImport	denied
 kms:GetPublicKey	allowed
 kms:ListAliases	allowed
 kms:ListGrants	allowed
@@ -4262,7 +4262,7 @@ lightsail:GetOperation	allowed
 lightsail:GetOperations	allowed
 lightsail:GetOperationsForResource	allowed
 lightsail:GetRegions	allowed
-lightsail:GetRelationalDatabase	allowed
+lightsail:GetRelationalDatabase	denied
 lightsail:GetRelationalDatabaseBlueprints	allowed
 lightsail:GetRelationalDatabaseBundles	allowed
 lightsail:GetRelationalDatabaseEvents	allowed
@@ -4270,7 +4270,7 @@ lightsail:GetRelationalDatabaseLogEvents	allowed
 lightsail:GetRelationalDatabaseLogStreams	allowed
 lightsail:GetRelationalDatabaseMetricData	allowed
 lightsail:GetRelationalDatabaseParameters	allowed
-lightsail:GetRelationalDatabases	allowed
+lightsail:GetRelationalDatabases	denied
 lightsail:GetRelationalDatabaseSnapshot	allowed
 lightsail:GetRelationalDatabaseSnapshots	allowed
 lightsail:GetStaticIp	allowed
@@ -4496,7 +4496,7 @@ medialive:DescribeChannelPlacementGroup	allowed
 medialive:DescribeCluster	allowed
 medialive:DescribeInput	allowed
 medialive:DescribeInputDevice	allowed
-medialive:DescribeInputDeviceThumbnail	allowed
+medialive:DescribeInputDeviceThumbnail	denied
 medialive:DescribeInputSecurityGroup	allowed
 medialive:DescribeMultiplex	allowed
 medialive:DescribeMultiplexProgram	allowed
@@ -4809,7 +4809,7 @@ observabilityadmin:GetS3TableIntegration	allowed
 observabilityadmin:GetTelemetryEnrichmentStatus	allowed
 observabilityadmin:GetTelemetryEvaluationStatus	allowed
 observabilityadmin:GetTelemetryEvaluationStatusForOrganization	allowed
-observabilityadmin:GetTelemetryPipeline	allowed
+observabilityadmin:GetTelemetryPipeline	configuration-value
 observabilityadmin:GetTelemetryRule	allowed
 observabilityadmin:GetTelemetryRuleForOrganization	allowed
 observabilityadmin:ListCentralizationRulesForOrganization	allowed
@@ -5188,7 +5188,7 @@ rds:DescribeRecommendations	allowed
 rds:DescribeReservedDBInstances	allowed
 rds:DescribeReservedDBInstancesOfferings	allowed
 rds:DescribeSourceRegions	allowed
-rds:DescribeTenantDatabases	allowed
+rds:DescribeTenantDatabases	denied
 rds:DescribeValidDBInstanceModifications	allowed
 rds:DownloadCompleteDBLogFile	allowed
 rds:DownloadDBLogFilePortion	allowed
@@ -6524,12 +6524,12 @@ sso:ListTagsForResource	allowed
 sso:ListTrustedTokenIssuers	allowed
 startups:GetSpendSummary	allowed
 states:DescribeActivity	allowed
-states:DescribeExecution	denied
+states:DescribeExecution	configuration-value	execution input and output
 states:DescribeMapRun	allowed
 states:DescribeStateMachine	allowed
 states:DescribeStateMachineAlias	allowed
 states:DescribeStateMachineForExecution	allowed
-states:GetExecutionHistory	denied
+states:GetExecutionHistory	configuration-value	execution input and output
 states:ListActivities	allowed
 states:ListExecutions	allowed
 states:ListMapRuns	allowed
@@ -6606,7 +6606,7 @@ swf:DescribeActivityType	allowed
 swf:DescribeDomain	allowed
 swf:DescribeWorkflowExecution	allowed
 swf:DescribeWorkflowType	allowed
-swf:GetWorkflowExecutionHistory	denied
+swf:GetWorkflowExecutionHistory	configuration-value	execution input and output
 swf:ListActivityTypes	allowed
 swf:ListClosedWorkflowExecutions	allowed
 swf:ListDomains	allowed
