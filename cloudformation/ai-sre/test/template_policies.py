@@ -36,15 +36,25 @@ def resolve(value, refs, conditions):
     return value
 
 
-def role(allow_configuration_values, template=check_contract.DEFAULT_TEMPLATE, refs=None):
-    """The role's resolved properties."""
-    props = cfn_yaml.load(template)["Resources"]["AiSreRole"]["Properties"]
+STACK_POLICY = "stack-managed-policy:"
+
+
+def _resolved(allow_configuration_values, template, logical_id):
+    resources = cfn_yaml.load(template)["Resources"]
+    refs = dict(SAMPLE_REFS)
+    # A !Ref to one of the stack's managed policies stands for that policy.
+    refs.update({name: STACK_POLICY + name for name, r in resources.items() if r.get("Type") == "AWS::IAM::ManagedPolicy"})
     conditions = {
         "DenyConfigurationValues": not allow_configuration_values,
         "HasPermissionsBoundary": False,
         "HasBetterStackTeam": False,
     }
-    return resolve(props, refs or SAMPLE_REFS, conditions)
+    return resolve(resources[logical_id]["Properties"], refs, conditions)
+
+
+def role(allow_configuration_values, template=check_contract.DEFAULT_TEMPLATE):
+    """The role's resolved properties."""
+    return _resolved(allow_configuration_values, template, "AiSreRole")
 
 
 def inline_policies(allow_configuration_values, template=check_contract.DEFAULT_TEMPLATE):
@@ -56,7 +66,30 @@ def inline_statements(allow_configuration_values, template=check_contract.DEFAUL
 
 
 def managed_policy_arns(allow_configuration_values, template=check_contract.DEFAULT_TEMPLATE):
-    return role(allow_configuration_values, template).get("ManagedPolicyArns", [])
+    """The AWS managed policies attached to the role; the stack's own ones are in stack_policies()."""
+    arns = role(allow_configuration_values, template).get("ManagedPolicyArns", [])
+    return [a for a in arns if not a.startswith(STACK_POLICY)]
+
+
+def stack_policies(allow_configuration_values, template=check_contract.DEFAULT_TEMPLATE):
+    """{logical id: resolved properties} of the stack's managed policies attached to the role."""
+    arns = role(allow_configuration_values, template).get("ManagedPolicyArns", [])
+    ids = [a[len(STACK_POLICY):] for a in arns if a.startswith(STACK_POLICY)]
+    return {i: _resolved(allow_configuration_values, template, i) for i in ids}
+
+
+def role_statements(allow_configuration_values, template=check_contract.DEFAULT_TEMPLATE):
+    """Every statement of the role's inline policies and of the stack's managed policies attached to it."""
+    stack = [s for p in stack_policies(allow_configuration_values, template).values() for s in p["PolicyDocument"]["Statement"]]
+    return inline_statements(allow_configuration_values, template) + stack
+
+
+def stack_policy_sizes(allow_configuration_values, template=check_contract.DEFAULT_TEMPLATE):
+    """{managed policy name: size}, counted as IAM counts against its 6,144-character quota, white space not counted."""
+    return {
+        p["ManagedPolicyName"]: len(re.sub(r"\s", "", json.dumps(p["PolicyDocument"], separators=(",", ":"))))
+        for p in stack_policies(allow_configuration_values, template).values()
+    }
 
 
 def inline_size(allow_configuration_values, template=check_contract.DEFAULT_TEMPLATE):

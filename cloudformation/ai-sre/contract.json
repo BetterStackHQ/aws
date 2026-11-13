@@ -100,5 +100,49 @@
   },
   "outputs": [
     "IntegrationRoleArn"
-  ]
+  ],
+  "stack_policies": {
+    "AiSreDenyDataPolicy": {
+      "Fn::Join": [
+        "",
+        [
+          "better-stack-ai-sre-deny-data-",
+          {
+            "Fn::Select": [
+              3,
+              {
+                "Fn::Split": [
+                  "-",
+                  {
+                    "Ref": "ExternalId"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      ]
+    },
+    "AiSreDenyStoredDataPolicy": {
+      "Fn::Join": [
+        "",
+        [
+          "better-stack-ai-sre-deny-stored-data-",
+          {
+            "Fn::Select": [
+              3,
+              {
+                "Fn::Split": [
+                  "-",
+                  {
+                    "Ref": "ExternalId"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      ]
+    }
+  }
 }

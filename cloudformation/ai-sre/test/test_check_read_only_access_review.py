@@ -84,6 +84,41 @@ class ReviewTest(unittest.TestCase):
         self.write_review(self.read_review().replace("beta:GetWidget\tconfiguration-value", "beta:GetWidget\tdenied"))
         self.assertFails("FAIL beta:GetWidget is listed as denied", static=True)
 
+    def scope_the_deny(self, extra):
+        """The fixture template with its alpha:GetSecret* Deny given EXTRA (a condition or a resource scope)."""
+        with open(self.path("template.yaml"), encoding="utf-8") as f:
+            text = f.read()
+        old = "                  - alpha:GetSecret*\n                Resource: '*'\n"
+        assert text.count(old) == 1
+        with open(self.path("template.yaml"), "w", encoding="utf-8") as f:
+            f.write(text.replace(old, "                  - alpha:GetSecret*\n" + extra))
+
+    def test_a_resource_scoped_deny_needs_a_note(self):
+        self.scope_the_deny("                NotResource: 'arn:aws:alpha:::thing/public/*'\n")
+        code, out = self.run_check(static=True)
+        self.assertEqual(code, 0, out)  # the fixture's line carries a note
+        self.write_review(self.read_review().replace("alpha:GetSecretValue\tdenied\tthe secret itself", "alpha:GetSecretValue\tdenied"))
+        self.assertFails("FAIL alpha:GetSecretValue is listed as denied, and only a conditional or resource-scoped Deny matches it", static=True)
+
+    def test_a_conditional_deny_needs_a_note(self):
+        self.scope_the_deny("                Resource: '*'\n                Condition:\n                  StringNotLike:\n                    aws:SourceVpc: vpc-1\n")
+        self.write_review(self.read_review().replace("alpha:GetSecretValue\tdenied\tthe secret itself", "alpha:GetSecretValue\tdenied"))
+        self.assertFails("only a conditional or resource-scoped Deny matches it", static=True)
+
+    def test_a_deny_on_some_resources_only_needs_a_note(self):
+        self.scope_the_deny("                Resource: 'arn:aws:alpha:::thing/private/*'\n")
+        self.write_review(self.read_review().replace("alpha:GetSecretValue\tdenied\tthe secret itself", "alpha:GetSecretValue\tdenied"))
+        self.assertFails("only a conditional or resource-scoped Deny matches it", static=True)
+
+    def test_an_unconditional_deny_needs_no_note(self):
+        self.write_review(self.read_review().replace("alpha:GetSecretValue\tdenied\tthe secret itself", "alpha:GetSecretValue\tdenied"))
+        code, out = self.run_check(static=True)
+        self.assertEqual(code, 0, out)
+
+    def test_an_action_spelled_differently_from_the_service_reference_fails(self):
+        self.write_review(self.read_review().replace("alpha:GetThing\tallowed", "alpha:Getthing\tallowed"))
+        self.assertFails("FAIL alpha:Getthing is spelled alpha:GetThing in the service reference: use its spelling")
+
     def test_format_errors_fail(self):
         lines = self.read_review().split("\n")
         cases = {

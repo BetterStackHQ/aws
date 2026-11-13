@@ -10,8 +10,10 @@ name: "E2E AI SRE"
 # cloudformation:CreateStack, UpdateStack, DeleteStack, DescribeStacks, DescribeStackEvents and ListStacks on stacks
 # named e2e-ai-sre-*, iam:CreateRole, DeleteRole, GetRole, TagRole, UntagRole, UpdateRoleDescription,
 # PutRolePolicy, DeleteRolePolicy, GetRolePolicy, ListRolePolicies, ListAttachedRolePolicies, AttachRolePolicy and
-# DetachRolePolicy (for arn:aws:iam::aws:policy/ReadOnlyAccess) on roles named
-# better-stack-ai-sre-role-*, iam:SimulatePrincipalPolicy, and cloudformation:ValidateTemplate. Without the secret the
+# DetachRolePolicy (for ReadOnlyAccess and the stack's own policies) on roles named better-stack-ai-sre-role-*,
+# iam:CreatePolicy, DeletePolicy, GetPolicy, GetPolicyVersion, CreatePolicyVersion, DeletePolicyVersion and
+# ListPolicyVersions on policies named better-stack-ai-sre-*, iam:SimulatePrincipalPolicy, and
+# cloudformation:ValidateTemplate. Without the secret the
 # job skips with a notice. Pull requests from forks are skipped: they get no OIDC token.
 
 on:

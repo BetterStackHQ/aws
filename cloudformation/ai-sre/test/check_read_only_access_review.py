@@ -7,7 +7,9 @@ line per action: `<prefix>:<ActionName><TAB><verdict>`, with an optional third T
 are sorted by the lowercased action, and none repeats. A verdict is `allowed`, `denied` (a Deny statement of the
 template matches it in both settings) or `configuration-value` (readable in the default setting by design).
 
---static checks the list's format, and that every `denied` line is matched by a Deny statement of the template.
+--static checks the list's format, and that every `denied` line is matched by a Deny statement the role has in both
+settings, unconditional and on every resource. A Deny with a condition or a resource scope (the S3 objects outside
+AWSLogs/, say) counts only for a line whose note says what stays readable.
 --policy also expands AWS's ReadOnlyAccess (the policy document given, as `iam get-policy-version` returns it) and
 every Allow pattern in the template's inline policies against the service reference, and fails on every action
 that has no line: one AWS added to ReadOnlyAccess, or one an inline wildcard such as cloudwatch:Get* gained since
@@ -41,7 +43,7 @@ def _as_list(value):
 
 
 def parse_review(text):
-    """(the ReadOnlyAccess version the list was reviewed against, {action: verdict}, [format errors])."""
+    """(the ReadOnlyAccess version the list was reviewed against, {action: (verdict, note)}, [format errors])."""
     errors = []
     if "\r" in text:
         errors.append("the list has CR characters: it must use LF line endings")
@@ -82,33 +84,46 @@ def parse_review(text):
             errors.append(f"line {number}: {action} is out of order (sort by the lowercased action)")
         seen.add(key)
         previous = key
-        entries[action] = verdict
+        entries[action] = (verdict, fields[2] if len(fields) == 3 else "")
     return version, entries, errors
 
 
+def deny_statements(template):
+    """The Deny statements the role has in both settings."""
+    in_false = template_policies.role_statements(False, template)
+    return [s for s in template_policies.role_statements(True, template) if s["Effect"] == "Deny" and s in in_false]
+
+
 def deny_patterns(template):
-    """The action patterns of the Deny statements the role has in both settings."""
-    both = [
-        s for s in template_policies.inline_statements(True, template)
-        if s["Effect"] == "Deny" and s in template_policies.inline_statements(False, template)
-    ]
-    return sorted({p for s in both for p in _as_list(s["Action"])})
+    return sorted({p for s in deny_statements(template) for p in _as_list(s["Action"])})
+
+
+def _unconditional(statement):
+    return "Condition" not in statement and "NotResource" not in statement and "*" in _as_list(statement.get("Resource", []))
 
 
 def static_errors(entries, template):
-    patterns = deny_patterns(template)
-    return [
-        f"{action} is listed as denied, and no Deny statement of the template matches it"
-        for action, verdict in entries.items()
-        if verdict == "denied" and not any(glob_matches(p, action) for p in patterns)
-    ]
+    statements = deny_statements(template)
+    errors = []
+    for action, (verdict, note) in entries.items():
+        if verdict != "denied":
+            continue
+        matching = [s for s in statements if any(glob_matches(p, action) for p in _as_list(s["Action"]))]
+        if not matching:
+            errors.append(f"{action} is listed as denied, and no Deny statement of the template matches it")
+        elif not any(_unconditional(s) for s in matching) and not note:
+            errors.append(
+                f"{action} is listed as denied, and only a conditional or resource-scoped Deny matches it: "
+                "deny it on every resource, or say in a note what stays readable"
+            )
+    return errors
 
 
 def allow_patterns(template):
     """The action patterns of the template's inline Allow statements, in either setting."""
     found = set()
     for allow in (True, False):
-        for statement in template_policies.inline_statements(allow, template):
+        for statement in template_policies.role_statements(allow, template):
             if statement["Effect"] == "Allow":
                 found.update(_as_list(statement["Action"]))
     return sorted(found)
@@ -117,7 +132,7 @@ def allow_patterns(template):
 def template_patterns(template):
     found = set()
     for allow in (True, False):
-        for statement in template_policies.inline_statements(allow, template):
+        for statement in template_policies.role_statements(allow, template):
             found.update(_as_list(statement["Action"]))
     return sorted(found)
 
@@ -139,9 +154,12 @@ def drift_errors(entries, policy_document, template, reference):
                 expected |= reference.expand(pattern)
     for pattern in allow_patterns(template):
         expected |= reference.expand(pattern)
-    listed = {a.lower() for a in entries}
-    missing = sorted(a for a in expected if a.lower() not in listed)
-    errors += [f"{action} has no line in the reviewed list" for action in missing]
+    spelled = {a.lower(): a for a in entries}
+    for action in sorted(expected - set(entries)):
+        if action.lower() in spelled:
+            errors.append(f"{spelled[action.lower()]} is spelled {action} in the service reference: use its spelling")
+        else:
+            errors.append(f"{action} has no line in the reviewed list")
     return errors
 
 

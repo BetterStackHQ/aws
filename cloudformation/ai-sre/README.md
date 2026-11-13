@@ -1,6 +1,6 @@
 # Better Stack AI SRE
 
-`better-stack-ai-sre.yaml` creates one read-only IAM role that Better Stack AI SRE assumes to investigate incidents in your AWS account. The stack has no other resources: no Lambda functions, no buckets, nothing that runs or stores data.
+`better-stack-ai-sre.yaml` creates one read-only IAM role that Better Stack AI SRE assumes to investigate incidents in your AWS account, and two IAM policies that hold the role's denies. The stack has no other resources: no Lambda functions, no buckets, nothing that runs or stores data.
 
 See the [main README](../../README.md) for the rest of this repository.
 
@@ -28,7 +28,7 @@ One IAM role, `better-stack-ai-sre-role-<8 hex>`, where `<8 hex>` is the first e
 
 Only Better Stack's AI SRE callers for the chosen environment can assume the role, and only with the external ID Better Stack generated for your integration. A second trust statement lets the same callers set a source identity that starts with `bs-`, so that your CloudTrail can attribute AI SRE's calls; it grants no access by itself.
 
-With `AllowConfigurationValues=true`, the default, the role also has AWS's managed [`ReadOnlyAccess`](https://docs.aws.amazon.com/aws-managed-policy/latest/reference/ReadOnlyAccess.html) policy attached. The stack creates nothing else.
+The stack also creates two customer managed policies, `better-stack-ai-sre-deny-data-<8 hex>` and `better-stack-ai-sre-deny-stored-data-<8 hex>`, attached to the role in both settings. They hold the denies listed in [What the role can't read](#what-the-role-cant-read), which don't fit in the role's own inline policies. With `AllowConfigurationValues=true`, the default, the role also has AWS's managed [`ReadOnlyAccess`](https://docs.aws.amazon.com/aws-managed-policy/latest/reference/ReadOnlyAccess.html) policy attached. The stack creates nothing else.
 
 ## Stack Outputs
 
@@ -89,11 +89,14 @@ These reads are denied explicitly, in both settings, so that `ReadOnlyAccess` or
 - CloudWatch Omni's temporary credentials for a space (`cloudwatch:GetSpace*`: `GetSpaceCredentials`, `GetSpaceCredentialsForOrganization`, `GetSpaceDataAccess`)
 - CloudWatch Omni query results (`cloudwatch:GetTelemetryQueryResults`), which can hold rows of a query someone else ran, even with `logs:Unmask`
 - X-Ray sampling targets (`xray:GetSamplingTargets`), which report sampling statistics and change how X-Ray allocates your sampling quota
-- Credentials and tokens other services hand out: ECR and CodeArtifact tokens, Cognito client secrets and tokens, API keys (AWS WAF, AppSync), Redshift and Lake Formation credentials, Lightsail and GameLift access, IVS stream keys, Storage Gateway CHAP credentials
+- Credentials and tokens other services hand out: ECR and CodeArtifact tokens, Cognito client secrets, tokens and identity credentials, API keys (AWS WAF, AppSync), Redshift, Lake Formation and S3 Access Grants credentials, Lightsail and GameLift access, IVS stream keys, Storage Gateway CHAP credentials
+- More credentials and tokens: identity provider client secrets (Cognito, WorkSpaces Web), Amplify basic-auth credentials, MediaPackage ingest passwords, Chime and GameLift session tokens, push notification keys and device tokens (Pinpoint, SNS), CodePipeline job credentials, Snowball unlock codes and manifests, CloudHSM certificates, OpsWorks app keys, IoT Wireless device keys
 - Query results and stored content: Athena results, OpenSearch documents, Keyspaces, DAX, QLDB, SimpleDB, Timestream, Redshift Data API results, Glacier, EBS snapshot blocks, HealthLake, Kinesis Video, IoT shadows and SiteWise values, SageMaker Feature Store records, Bedrock and Bedrock AgentCore memory and knowledge bases
-- End users in Cognito user pools
-- Code: Lambda layers, container images, CodeCommit files, CodeArtifact packages
-- Direct Connect virtual interfaces (BGP keys) and Client VPN configurations
+- More stored content: Cloud Directory, CloudFront KeyValueStore, Data Exchange assets, DynamoDB vector search, Kendra, Personalize and Forecast queries, Fraud Detector events, Glue interactive session statements, IoT retained messages and topic rules, SES archived mail, Support case attachments, Transcribe jobs, Translate data, WorkDocs comments and versions, S3 on Outposts and MediaPackage objects
+- Inputs, outputs and payloads of workflow runs: Step Functions executions, SWF workflow history and Lambda durable executions
+- End users of your product: Cognito user pools and sync records, Amazon Connect contact data, Lex sessions, Pinpoint endpoints, SES contact lists and suppressed addresses, opted-out phone numbers
+- Code: Lambda layers, container images, CodeCommit files and diffs, CodeArtifact packages, CloudFront functions, Greengrass component artifacts, Inspector code snippets
+- Direct Connect virtual interfaces and router configurations (BGP keys), Interconnect connections and Client VPN configurations
 - `kms:Decrypt` directly, or through any service other than CloudWatch Logs, Lambda, S3, X-Ray, RDS, Step Functions and Glue
 
 With `AllowConfigurationValues=false`, nothing allows `kms:Decrypt` through any service but CloudWatch Logs, so resources under your own key stay unreadable there unless your key policy grants the role directly. Lambda decrypts a function's environment variables as the caller, so environment variables under the default `aws/lambda` key are readable in both settings.
@@ -131,7 +134,8 @@ Better Stack, setup links already sent, stacks updated in place and roles rebuil
 - The tag key `BetterStackAiSreTemplateVersion` never changes.
 - The trust is two statements: `sts:AssumeRole` with the external ID and the callers' path conditions, and `sts:SetSourceIdentity` with the callers' path and a source identity starting `bs-`. No other `sts` action is ever added.
 - Better Stack's role session names start with `BetterStackAiSre-`.
-- Better Stack's source identity values start with `bs-`.
+- Better Stack's source identity values start with `bs-`, and always will.
+- The deny policies `better-stack-ai-sre-deny-data-<8 hex>` and `better-stack-ai-sre-deny-stored-data-<8 hex>` keep their names and stay attached to the role in both settings.
 
 [`contract.json`](contract.json) records these fields. CI lints the template with cfn-lint, checks it against the contract (`test/check_contract.py`), checks the reviewed `ReadOnlyAccess` list (`test/check_read_only_access_review.py --static`), and runs the tests of those checks and of the policy simulator script:
 

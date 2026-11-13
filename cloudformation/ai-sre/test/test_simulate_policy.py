@@ -74,7 +74,7 @@ BROAD_ACCESS = [
 
 def statements(allow_configuration_values):
     """The role's inline statements and, where the template attaches it, ReadOnlyAccess's."""
-    found = template_policies.inline_statements(allow_configuration_values)
+    found = template_policies.role_statements(allow_configuration_values)
     for arn in template_policies.managed_policy_arns(allow_configuration_values):
         assert arn == template_policies.READ_ONLY_ACCESS_ARN, f"the stub knows no managed policy {arn}"
         with open(READ_ONLY_ACCESS_FIXTURE, encoding="utf-8") as f:
@@ -205,9 +205,15 @@ class SimulatePolicyTest(unittest.TestCase):
             rows = [(t, f) for a, _, c, t, f in sim.CHECKS if a == "kms:Decrypt" and c == sim.via(service)]
             self.assertEqual(rows, [(sim.DENY, sim.DENY)], service)
 
-    def test_the_inline_policies_fit_iam_quota_in_both_settings(self):
+    def test_the_policies_fit_iam_quotas_in_both_settings(self):
         for allow in (True, False):
-            self.assertLess(template_policies.inline_size(allow), 10240, f"AllowConfigurationValues={allow}")
+            self.assertLess(template_policies.inline_size(allow), 10240, f"inline, AllowConfigurationValues={allow}")
+            sizes = template_policies.stack_policy_sizes(allow)
+            self.assertEqual(len(sizes), 2, sizes)
+            for name, size in sizes.items():
+                self.assertLess(size, 6144, f"{name}, AllowConfigurationValues={allow}")
+            attached = len(sizes) + len(template_policies.managed_policy_arns(allow))
+            self.assertLessEqual(attached, 20, "a role takes 20 managed policies by default")
 
     def test_kms_checks_send_the_via_service_context(self):
         iam = StubIam(True)

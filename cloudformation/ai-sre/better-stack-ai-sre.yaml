@@ -11,6 +11,8 @@ Description: Better Stack AI SRE - a read-only role Better Stack assumes to inve
 #     sts:SetSourceIdentity with the callers' path and a source identity starting bs-. No other sts action is added.
 #   - Better Stack's role session names start with BetterStackAiSre-, and always will.
 #   - Better Stack's source identity values start with bs-, and always will.
+#   - The deny policies better-stack-ai-sre-deny-data-<8 hex> and better-stack-ai-sre-deny-stored-data-<8 hex> keep
+#     their names and stay attached to the role in both settings.
 # The "latest" copy of this file is fetched when the console opens a setup link and again when the stack is created,
 # so a release that renamed or removed a parameter a link passes, or added one without a default, would fail creates.
 # cloudformation/ai-sre/contract.json records these fields and CI (cloudformation/ai-sre/test/) checks every change
@@ -104,12 +106,18 @@ Resources:
         - !Sub 'Read-only access for Better Stack AI SRE. Team: ${BetterStackTeam}'
         - Read-only access for Better Stack AI SRE.
       PermissionsBoundary: !If [HasPermissionsBoundary, !Ref PermissionsBoundaryArn, !Ref 'AWS::NoValue']
-      # AWS's ReadOnlyAccess in the default setting only. AWS extends it as it adds services; the denies below still
-      # apply to everything it grants.
-      ManagedPolicyArns: !If
-        - DenyConfigurationValues
-        - !Ref 'AWS::NoValue'
-        - - !Sub 'arn:${AWS::Partition}:iam::aws:policy/ReadOnlyAccess'
+      # AWS's ReadOnlyAccess in the default setting only. AWS extends it as it adds services; the denies still apply to
+      # everything it grants.
+      ManagedPolicyArns:
+        # The explicit denies, in both settings, so that ReadOnlyAccess or a broader policy attached to the role later
+        # can't widen it to secrets or data. They are managed policies of this stack because the role's inline
+        # policies can't hold them all.
+        - !Ref AiSreDenyDataPolicy
+        - !Ref AiSreDenyStoredDataPolicy
+        - !If
+          - DenyConfigurationValues
+          - !Ref 'AWS::NoValue'
+          - !Sub 'arn:${AWS::Partition}:iam::aws:policy/ReadOnlyAccess'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -137,119 +145,11 @@ Resources:
               StringLike:
                 sts:SourceIdentity: 'bs-*'
       Policies:
-        - PolicyName: BetterStackAiSreReadAccess
+        # Needed in both settings: the role's own policies, encrypted log groups, and the token for AWS's MCP Server.
+        - PolicyName: BetterStackAiSreCoreAccess
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
-              - Sid: CloudWatchRead
-                Effect: Allow
-                Action:
-                  - cloudwatch:Describe*
-                  - cloudwatch:Get*
-                  - cloudwatch:List*
-                Resource: '*'
-              - Sid: LogsRead
-                Effect: Allow
-                Action:
-                  - logs:Describe*
-                  - logs:Get*
-                  - logs:List*
-                  - logs:FilterLogEvents
-                Resource: '*'
-              - Sid: EC2Read
-                Effect: Allow
-                Action:
-                  - ec2:Describe*
-                Resource: '*'
-              - Sid: TaggingRead
-                Effect: Allow
-                Action:
-                  - tag:Get*
-                Resource: '*'
-              - Sid: ComputeDiscovery
-                Effect: Allow
-                Action:
-                  - autoscaling:Describe*
-                  - ecs:Describe*
-                  - ecs:List*
-                  - eks:Describe*
-                  - eks:List*
-                  - batch:Describe*
-                  - batch:List*
-                  - lambda:List*
-                  # Not lambda:GetFunction: its result carries a presigned URL to the function's code.
-                  - lambda:GetFunctionConfiguration
-                Resource: '*'
-              - Sid: DatabaseDiscovery
-                Effect: Allow
-                Action:
-                  - rds:Describe*
-                  - rds:List*
-                  - dynamodb:Describe*
-                  - dynamodb:List*
-                  - elasticache:Describe*
-                  - elasticache:List*
-                Resource: '*'
-              - Sid: StorageDiscovery
-                Effect: Allow
-                Action:
-                  - s3:GetBucketLocation
-                  - s3:GetBucketTagging
-                  - s3:ListAllMyBuckets
-                  - elasticfilesystem:DescribeFileSystems
-                  - elasticfilesystem:DescribeTags
-                Resource: '*'
-              - Sid: NetworkingDiscovery
-                Effect: Allow
-                Action:
-                  - elasticloadbalancing:Describe*
-                  - apigateway:GET
-                  - route53:List*
-                Resource: '*'
-              - Sid: MessagingDiscovery
-                Effect: Allow
-                Action:
-                  - sqs:ListQueues
-                  - sqs:GetQueueAttributes
-                  - sns:List*
-                  - sns:GetTopicAttributes
-                  - kinesis:Describe*
-                  - kinesis:List*
-                  - firehose:Describe*
-                  - firehose:List*
-                Resource: '*'
-              - Sid: ApplicationServices
-                Effect: Allow
-                Action:
-                  - states:DescribeStateMachine
-                  - states:ListStateMachines
-                  - events:List*
-                  - events:Describe*
-                Resource: '*'
-              - Sid: ManagementMonitoring
-                Effect: Allow
-                Action:
-                  - cloudtrail:DescribeTrails
-                  - cloudtrail:GetTrailStatus
-                  - cloudtrail:ListTrails
-                  - health:Describe*
-                Resource: '*'
-              # Logs Insights, recent API activity, traces, deployment history from stack events, scaling, the
-              # account alias and the enabled regions.
-              - Sid: InvestigationReads
-                Effect: Allow
-                Action:
-                  - logs:StartQuery
-                  - logs:StopQuery
-                  - cloudtrail:LookupEvents
-                  - xray:Get*
-                  - xray:BatchGetTraces
-                  - cloudformation:Describe*
-                  - cloudformation:List*
-                  - application-autoscaling:Describe*
-                  - iam:ListAccountAliases
-                  - account:ListRegions
-                Resource: '*'
               # The role's own version tag and policies, and nothing about any other role.
               - Sid: SelfRead
                 Effect: Allow
@@ -275,6 +175,124 @@ Resources:
                 Action:
                   - signin:CreateOAuth2Token
                 Resource: 'arn:aws:signin:*:*:service-principal/aws-mcp.amazonaws.com'
+        # The curated read list, the whole of what the role reads with AllowConfigurationValues=false. With true,
+        # ReadOnlyAccess grants these reads and more.
+        - !If
+          - DenyConfigurationValues
+          - PolicyName: BetterStackAiSreReadAccess
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Sid: CloudWatchRead
+                  Effect: Allow
+                  Action:
+                    - cloudwatch:Describe*
+                    - cloudwatch:Get*
+                    - cloudwatch:List*
+                  Resource: '*'
+                - Sid: LogsRead
+                  Effect: Allow
+                  Action:
+                    - logs:Describe*
+                    - logs:Get*
+                    - logs:List*
+                    - logs:FilterLogEvents
+                  Resource: '*'
+                - Sid: EC2Read
+                  Effect: Allow
+                  Action:
+                    - ec2:Describe*
+                  Resource: '*'
+                - Sid: TaggingRead
+                  Effect: Allow
+                  Action:
+                    - tag:Get*
+                  Resource: '*'
+                - Sid: ComputeDiscovery
+                  Effect: Allow
+                  Action:
+                    - autoscaling:Describe*
+                    - ecs:Describe*
+                    - ecs:List*
+                    - eks:Describe*
+                    - eks:List*
+                    - batch:Describe*
+                    - batch:List*
+                    - lambda:List*
+                    # Not lambda:GetFunction: its result carries a presigned URL to the function's code.
+                    - lambda:GetFunctionConfiguration
+                  Resource: '*'
+                - Sid: DatabaseDiscovery
+                  Effect: Allow
+                  Action:
+                    - rds:Describe*
+                    - rds:List*
+                    - dynamodb:Describe*
+                    - dynamodb:List*
+                    - elasticache:Describe*
+                    - elasticache:List*
+                  Resource: '*'
+                - Sid: StorageDiscovery
+                  Effect: Allow
+                  Action:
+                    - s3:GetBucketLocation
+                    - s3:GetBucketTagging
+                    - s3:ListAllMyBuckets
+                    - elasticfilesystem:DescribeFileSystems
+                    - elasticfilesystem:DescribeTags
+                  Resource: '*'
+                - Sid: NetworkingDiscovery
+                  Effect: Allow
+                  Action:
+                    - elasticloadbalancing:Describe*
+                    - apigateway:GET
+                    - route53:List*
+                  Resource: '*'
+                - Sid: MessagingDiscovery
+                  Effect: Allow
+                  Action:
+                    - sqs:ListQueues
+                    - sqs:GetQueueAttributes
+                    - sns:List*
+                    - sns:GetTopicAttributes
+                    - kinesis:Describe*
+                    - kinesis:List*
+                    - firehose:Describe*
+                    - firehose:List*
+                  Resource: '*'
+                - Sid: ApplicationServices
+                  Effect: Allow
+                  Action:
+                    - states:DescribeStateMachine
+                    - states:ListStateMachines
+                    - events:List*
+                    - events:Describe*
+                  Resource: '*'
+                - Sid: ManagementMonitoring
+                  Effect: Allow
+                  Action:
+                    - cloudtrail:DescribeTrails
+                    - cloudtrail:GetTrailStatus
+                    - cloudtrail:ListTrails
+                    - health:Describe*
+                  Resource: '*'
+                # Logs Insights, recent API activity, traces, deployment history from stack events, scaling, the
+                # account alias and the enabled regions.
+                - Sid: InvestigationReads
+                  Effect: Allow
+                  Action:
+                    - logs:StartQuery
+                    - logs:StopQuery
+                    - cloudtrail:LookupEvents
+                    - xray:Get*
+                    - xray:BatchGetTraces
+                    - cloudformation:Describe*
+                    - cloudformation:List*
+                    - application-autoscaling:Describe*
+                    - iam:ListAccountAliases
+                    - account:ListRegions
+                  Resource: '*'
+          - !Ref 'AWS::NoValue'
         - !If
           - DenyConfigurationValues
           - !Ref 'AWS::NoValue'
@@ -318,187 +336,6 @@ Resources:
                         - rds.*.amazonaws.com
                         - states.*.amazonaws.com
                         - glue.*.amazonaws.com
-        # Explicit denies, so that a broader policy attached to the role later cannot widen it to secrets or data.
-        - PolicyName: BetterStackAiSreDenyDataAccess
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Sid: DenyData
-                Effect: Deny
-                Action:
-                  - secretsmanager:GetSecretValue
-                  - ssm:GetParameter*
-                  - lambda:GetFunction
-                  - lambda:InvokeFunction
-                  - dynamodb:GetItem
-                  - dynamodb:BatchGetItem
-                  - dynamodb:Query
-                  - dynamodb:Scan
-                  - dynamodb:PartiQLSelect
-                  - dynamodb:GetRecords
-                  - sqs:ReceiveMessage
-                  - kinesis:GetRecords
-                  - kinesis:SubscribeToShard
-                  - ec2:GetPasswordData
-                  # Returns the tunnels' pre-shared keys.
-                  - ec2:DescribeVpnConnections
-                  - logs:Unmask
-                  # CloudWatch Omni's GetSpaceCredentials, GetSpaceCredentialsForOrganization and GetSpaceDataAccess hand
-                  # out temporary credentials of a space's own role, which these denies don't bind.
-                  - cloudwatch:GetSpace*
-                  # Can return rows of an Omni query someone else started, even one run with logs:Unmask; the role can't start queries.
-                  - cloudwatch:GetTelemetryQueryResults
-                  # Under xray:Get*, but reports sampling statistics and changes how X-Ray allocates the sampling quota.
-                  - xray:GetSamplingTargets
-                Resource: '*'
-              # Objects stay unreadable, except the logs AWS services deliver under an AWSLogs/ key (load balancer
-              # access logs, VPC Flow Logs, CloudTrail). Access point and Object Lambda ARNs never match, so they stay denied.
-              - Sid: DenyS3ObjectsOutsideAwsLogs
-                Effect: Deny
-                Action:
-                  - s3:GetObject*
-                NotResource: !Sub 'arn:${AWS::Partition}:s3:::*/AWSLogs/*'
-              - Sid: DenyCredentials
-                Effect: Deny
-                Action:
-                  - ecr:GetAuthorizationToken
-                  - ecr-public:GetAuthorizationToken
-                  - codeartifact:GetAuthorizationToken
-                  - connect:GetFederationToken
-                  - cognito-idp:ListUserPoolClientSecrets
-                  - cognito-idp:DescribeUserPoolClient
-                  - cognito-idp:GetClientToken
-                  - cognito-idp:GetTokensFromRefreshToken
-                  - cognito-idp:GetUserAttributeVerificationCode
-                  - cognito-identity:GetOpenIdToken*
-                  - wafv2:GetDecryptedAPIKey
-                  - wafv2:ListAPIKeys
-                  - appsync:ListApiKeys
-                  - storagegateway:DescribeChapCredentials
-                  - chime:ListVoiceConnectorTerminationCredentials
-                  - lightsail:GetBucketAccessKeys
-                  - lightsail:GetKeyPair*
-                  - lightsail:GetRelationalDatabaseMasterUserPassword
-                  - lightsail:GetInstanceAccessDetails
-                  - lightsail:DownloadDefaultKeyPair
-                  - gamelift:GetComputeAuthToken
-                  - gamelift:GetInstanceAccess
-                  - gamelift:GetComputeAccess
-                  - acm:GetAcmeExternalAccountBindingCredentials
-                  - ssm:GetAccessToken
-                  - license-manager:GetAccessToken
-                  - bedrock:CallWithBearerToken
-                  - bedrock-mantle:CallWithBearerToken
-                  - bedrock-agentcore:Get*CredentialProvider
-                  - s3express:CreateSession
-                  - secretsmanager:BatchGetSecretValue
-                  - redshift:GetClusterCredentials*
-                  - redshift-serverless:GetCredentials
-                  - ivs:GetStreamKey
-                  - ivs:BatchGetStreamKey
-                  - lakeformation:GetDataAccess
-                  - sns:GetSubscriptionAttributes
-                  # Carry pre-shared or BGP keys, like ec2:DescribeVpnConnections above.
-                  - directconnect:DescribeVirtualInterfaces
-                  - ec2:GetVpnConnectionDeviceSampleConfiguration
-                  - ec2:ExportClientVpnClientConfiguration
-                Resource: '*'
-              - Sid: DenyStoredData
-                Effect: Deny
-                Action:
-                  - athena:GetQueryResults*
-                  - cassandra:Select
-                  - dax:GetItem
-                  - dax:BatchGetItem
-                  - dax:Query
-                  - dax:Scan
-                  - dynamodb:ReadDataForReplication
-                  - qldb:GetBlock
-                  - qldb:GetRevision
-                  - sdb:Select
-                  - sdb:GetAttributes
-                  - timestream:Select
-                  - redshift-data:GetStatementResult*
-                  - glacier:GetJobOutput
-                  - mediastore:GetObject
-                  - s3-object-lambda:GetObject*
-                  - s3vectors:GetVectors
-                  - s3vectors:QueryVectors
-                  - s3tables:GetTableData
-                  - ebs:GetSnapshotBlock
-                  - ebs:ListSnapshotBlocks
-                  - es:ESHttp*
-                  - aoss:APIAccessAll
-                  - aoss:DashboardsAccessAll
-                  - kinesisvideo:Get*
-                  - healthlake:ReadResource
-                  - healthlake:Search*
-                  - healthlake:GetHistoryByResourceId
-                  - medical-imaging:GetImageFrame
-                  - medical-imaging:GetImageSetMetadata
-                  - omics:GetReadSet
-                  - iot:GetThingShadow
-                  - iotsitewise:Get*Property*
-                  - iotanalytics:GetDatasetContent
-                  - iotanalytics:SampleChannelData
-                  - sagemaker:GetRecord
-                  - sagemaker:BatchGetRecord
-                  - bedrock:GetAgentMemory
-                  - bedrock:Retrieve
-                  - bedrock:AgenticRetrieveStream
-                  - bedrock:GetDocumentContent
-                  - bedrock-agentcore:GetMemoryRecord
-                  - bedrock-agentcore:RetrieveMemoryRecords
-                  - bedrock-agentcore:ListMemoryRecords
-                  - bedrock-agentcore:GetEvent
-                  - bedrock-agentcore:ListEvents
-                  - workdocs:GetDocument*
-                  - chime:GetChannelMessage
-                  - chime:ListChannelMessages
-                  # End users of the customer's product.
-                  - cognito-idp:AdminGet*
-                  - cognito-idp:AdminList*
-                  - cognito-idp:ListUsers*
-                  # Code, as lambda:GetFunction above.
-                  - lambda:GetLayerVersion
-                  - ecr:BatchGetImage
-                  - ecr:GetDownloadUrlForLayer
-                  - codecommit:GitPull
-                  - codecommit:GetFile
-                  - codecommit:GetFolder
-                  - codecommit:GetBlob
-                  - codeartifact:ReadFromRepository
-                  - codeartifact:GetPackageVersionAsset
-                Resource: '*'
-              - Sid: DenyApiKeys
-                Effect: Deny
-                Action:
-                  - apigateway:GET
-                Resource:
-                  - 'arn:aws:apigateway:*::/apikeys'
-                  - 'arn:aws:apigateway:*::/apikeys/*'
-                  # A usage plan's keys carry the same values.
-                  - 'arn:aws:apigateway:*::/usageplans/*/keys'
-                  - 'arn:aws:apigateway:*::/usageplans/*/keys/*'
-              # kms:Decrypt only through the services AI SRE reads encrypted resources with. Lambda decrypts a
-              # function's environment as the caller, so without it no function's environment variables would be
-              # readable. In restricted mode only the CloudWatch Logs allow reaches a key, so the others stay unreadable
-              # there unless a key policy names the role.
-              - Sid: DenyKmsOutsideNamedServices
-                Effect: Deny
-                Action:
-                  - kms:Decrypt
-                Resource: '*'
-                Condition:
-                  StringNotLike:
-                    kms:ViaService:
-                      - logs.*.amazonaws.com
-                      - lambda.*.amazonaws.com
-                      - s3.*.amazonaws.com
-                      - xray.*.amazonaws.com
-                      - rds.*.amazonaws.com
-                      - states.*.amazonaws.com
-                      - glue.*.amazonaws.com
         - !If
           - DenyConfigurationValues
           # Every read Better Stack knows returns environment variables, user data or parameter values.
@@ -559,6 +396,326 @@ Resources:
         # Read back by Better Stack to tell which release made the role. Never rename this key.
         - Key: BetterStackAiSreTemplateVersion
           Value: !FindInMap [Release, Current, Version]
+
+  # Named like the role, from the external ID. Never change these names: an update would replace the policies.
+  AiSreDenyDataPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Join ['', ['better-stack-ai-sre-deny-data-', !Select [3, !Split ['-', !Ref ExternalId]]]]
+      Description: Better Stack AI SRE - denies secrets, credentials and data reads to the AI SRE role
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyData
+            Effect: Deny
+            Action:
+              - secretsmanager:GetSecretValue
+              - ssm:GetParameter*
+              - lambda:GetFunction
+              - lambda:InvokeFunction
+              - dynamodb:GetItem
+              - dynamodb:BatchGetItem
+              - dynamodb:Query
+              - dynamodb:Scan
+              - dynamodb:PartiQLSelect
+              - dynamodb:GetRecords
+              - sqs:ReceiveMessage
+              - kinesis:GetRecords
+              - kinesis:SubscribeToShard
+              - ec2:GetPasswordData
+              # Returns the tunnels' pre-shared keys.
+              - ec2:DescribeVpnConnections
+              - logs:Unmask
+              # CloudWatch Omni's GetSpaceCredentials, GetSpaceCredentialsForOrganization and GetSpaceDataAccess hand
+              # out temporary credentials of a space's own role, which these denies don't bind.
+              - cloudwatch:GetSpace*
+              # Can return rows of an Omni query someone else started, even one run with logs:Unmask; the role can't start queries.
+              - cloudwatch:GetTelemetryQueryResults
+              # Under xray:Get*, but reports sampling statistics and changes how X-Ray allocates the sampling quota.
+              - xray:GetSamplingTargets
+            Resource: '*'
+          # Objects stay unreadable, except the logs AWS services deliver under an AWSLogs/ key (load balancer
+          # access logs, VPC Flow Logs, CloudTrail). Access point and Object Lambda ARNs never match, so they stay denied.
+          - Sid: DenyS3ObjectsOutsideAwsLogs
+            Effect: Deny
+            Action:
+              - s3:GetObject*
+            NotResource: !Sub 'arn:${AWS::Partition}:s3:::*/AWSLogs/*'
+          - Sid: DenyCredentials
+            Effect: Deny
+            Action:
+              - ecr:GetAuthorizationToken
+              - ecr-public:GetAuthorizationToken
+              - codeartifact:GetAuthorizationToken
+              - connect:GetFederationToken
+              - cognito-idp:ListUserPoolClientSecrets
+              - cognito-idp:DescribeUserPoolClient
+              - cognito-idp:GetClientToken
+              - cognito-idp:GetTokensFromRefreshToken
+              - cognito-idp:GetUserAttributeVerificationCode
+              - cognito-identity:GetOpenIdToken*
+              - wafv2:GetDecryptedAPIKey
+              - wafv2:ListAPIKeys
+              - appsync:ListApiKeys
+              - storagegateway:DescribeChapCredentials
+              - chime:ListVoiceConnectorTerminationCredentials
+              - lightsail:GetBucketAccessKeys
+              - lightsail:GetKeyPair*
+              - lightsail:GetRelationalDatabaseMasterUserPassword
+              - lightsail:GetInstanceAccessDetails
+              - lightsail:DownloadDefaultKeyPair
+              - gamelift:GetComputeAuthToken
+              - gamelift:GetInstanceAccess
+              - gamelift:GetComputeAccess
+              - acm:GetAcmeExternalAccountBindingCredentials
+              - ssm:GetAccessToken
+              - license-manager:GetAccessToken
+              - bedrock:CallWithBearerToken
+              - bedrock-mantle:CallWithBearerToken
+              - bedrock-agentcore:Get*CredentialProvider
+              - s3express:CreateSession
+              - secretsmanager:BatchGetSecretValue
+              - redshift:GetClusterCredentials*
+              - redshift-serverless:GetCredentials
+              - ivs:GetStreamKey
+              - ivs:BatchGetStreamKey
+              - lakeformation:GetDataAccess
+              - sns:GetSubscriptionAttributes
+              - cognito-identity:GetCredentialsForIdentity
+              - s3:GetDataAccess
+              - athena:GetSessionEndpoint
+              - emr-serverless:GetDashboardForJobRun
+              - codepipeline:GetJobDetails
+              - codepipeline:GetThirdPartyJobDetails
+              - snowball:GetJobUnlockCode
+              - snowball:GetJobManifest
+              - cloudhsm:DescribeClusters
+              - opsworks:DescribeApps
+              - iotwireless:GetWirelessDevice
+              # Identity provider client secrets.
+              - cognito-idp:DescribeIdentityProvider
+              - cognito-idp:GetIdentityProviderByIdentifier
+              - workspaces-web:GetIdentityProvider
+              # Basic authentication, ingest passwords and stream keys.
+              - amplify:GetApp
+              - amplify:GetBranch
+              - amplify:ListApps
+              - amplify:ListBranches
+              - mediapackage:DescribeChannel
+              - mediapackage:ListChannels
+              - ivs:GetChannel
+              - ivs:BatchGetChannel
+              - ivs:GetIngestConfiguration
+              - ivs:GetStreamSession
+              # Join, session and push tokens.
+              - chime:GetAttendee
+              - chime:ListAttendees
+              - chime:GetBot
+              - chime:ListBots
+              - gamelift:GetPlayerConnectionDetails
+              - gameliftstreams:GetStreamUrl
+              - gameliftstreams:ListStreamUrls
+              - mobiletargeting:GetBaiduChannel
+              - mobiletargeting:GetGcmChannel
+              - sns:GetEndpointAttributes
+              - sns:ListEndpointsByPlatformApplication
+              # Carry pre-shared or BGP keys, like ec2:DescribeVpnConnections above.
+              - directconnect:DescribeVirtualInterfaces
+              - directconnect:DescribeRouterConfiguration
+              - interconnect:GetConnection
+              - ec2:GetVpnConnectionDeviceSampleConfiguration
+              - ec2:ExportClientVpnClientConfiguration
+            Resource: '*'
+          - Sid: DenyApiKeys
+            Effect: Deny
+            Action:
+              - apigateway:GET
+            Resource:
+              - 'arn:aws:apigateway:*::/apikeys'
+              - 'arn:aws:apigateway:*::/apikeys/*'
+              # A usage plan's keys carry the same values.
+              - 'arn:aws:apigateway:*::/usageplans/*/keys'
+              - 'arn:aws:apigateway:*::/usageplans/*/keys/*'
+          # kms:Decrypt only through the services AI SRE reads encrypted resources with. Lambda decrypts a
+          # function's environment as the caller, so without it no function's environment variables would be
+          # readable. In restricted mode only the CloudWatch Logs allow reaches a key, so the others stay unreadable
+          # there unless a key policy names the role.
+          - Sid: DenyKmsOutsideNamedServices
+            Effect: Deny
+            Action:
+              - kms:Decrypt
+            Resource: '*'
+            Condition:
+              StringNotLike:
+                kms:ViaService:
+                  - logs.*.amazonaws.com
+                  - lambda.*.amazonaws.com
+                  - s3.*.amazonaws.com
+                  - xray.*.amazonaws.com
+                  - rds.*.amazonaws.com
+                  - states.*.amazonaws.com
+                  - glue.*.amazonaws.com
+
+  AiSreDenyStoredDataPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Join ['', ['better-stack-ai-sre-deny-stored-data-', !Select [3, !Split ['-', !Ref ExternalId]]]]
+      Description: Better Stack AI SRE - denies reads of stored content, end users and code to the AI SRE role
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyStoredData
+            Effect: Deny
+            Action:
+              - athena:GetQueryResults*
+              - cassandra:Select
+              - dax:GetItem
+              - dax:BatchGetItem
+              - dax:Query
+              - dax:Scan
+              - dynamodb:ReadDataForReplication
+              - qldb:GetBlock
+              - qldb:GetRevision
+              - sdb:Select
+              - sdb:GetAttributes
+              - timestream:Select
+              - redshift-data:GetStatementResult*
+              - glacier:GetJobOutput
+              - mediastore:GetObject
+              - s3-object-lambda:GetObject*
+              - s3vectors:GetVectors
+              - s3vectors:QueryVectors
+              - s3tables:GetTableData
+              - ebs:GetSnapshotBlock
+              - ebs:ListSnapshotBlocks
+              - es:ESHttp*
+              - aoss:APIAccessAll
+              - aoss:DashboardsAccessAll
+              - kinesisvideo:Get*
+              - healthlake:ReadResource
+              - healthlake:Search*
+              - healthlake:GetHistoryByResourceId
+              - medical-imaging:GetImageFrame
+              - medical-imaging:GetImageSetMetadata
+              - omics:GetReadSet
+              - iot:GetThingShadow
+              - iotsitewise:Get*Property*
+              - iotanalytics:GetDatasetContent
+              - iotanalytics:SampleChannelData
+              - sagemaker:GetRecord
+              - sagemaker:BatchGetRecord
+              - bedrock:GetAgentMemory
+              - bedrock:Retrieve
+              - bedrock:AgenticRetrieveStream
+              - bedrock:GetDocumentContent
+              - bedrock-agentcore:GetMemoryRecord
+              - bedrock-agentcore:RetrieveMemoryRecords
+              - bedrock-agentcore:ListMemoryRecords
+              - bedrock-agentcore:GetEvent
+              - bedrock-agentcore:ListEvents
+              - workdocs:GetDocument*
+              - chime:GetChannelMessage
+              - chime:ListChannelMessages
+              - aidevops:ListJournalRecords
+              - aidevops:ListPendingMessages
+              - bedrock:GetInvocationStep
+              - bedrock:ListFlowExecutionEvents
+              - clouddirectory:BatchRead
+              - clouddirectory:GetLinkAttributes
+              - clouddirectory:GetObjectAttributes
+              - clouddirectory:ListAttachedIndices
+              - clouddirectory:ListIncomingTypedLinks
+              - clouddirectory:ListIndex
+              - clouddirectory:ListObjectAttributes
+              - clouddirectory:ListOutgoingTypedLinks
+              - cloudfront-keyvaluestore:GetKey
+              - cloudfront-keyvaluestore:ListKeys
+              - dataexchange:GetAsset
+              - dataexchange:GetJob
+              - dataexchange:ListJobs
+              - dataexchange:ListRevisionAssets
+              - dynamodb:SearchVectors
+              - ec2:DescribeConversionTasks
+              - forecast:QueryForecast
+              - forecast:QueryWhatIfForecast
+              - frauddetector:GetEvent
+              - frauddetector:GetEventPredictionMetadata
+              - glue:GetStatement
+              - glue:ListStatements
+              - importexport:GetStatus
+              - iot:GetRetainedMessage
+              - iot:GetTopicRule
+              - iotsitewise:GetCaptureData
+              - iotsitewise:GetQueryResults
+              - kendra:Query
+              - kendra:GetQuerySuggestions
+              - kinesisanalytics:DiscoverInputSchema
+              - lookoutmetrics:GetSampleData
+              - mediapackagev2:GetObject
+              - omics:GetReference
+              - personalize:GetPersonalizedRanking
+              - personalize:GetRecommendations
+              - rekognition:GetTextDetection
+              - s3-outposts:GetObject
+              - s3-outposts:GetObjectVersion
+              - s3-outposts:GetObjectVersionForReplication
+              - securityagent:GetArtifact
+              - ses:GetArchiveMessage
+              - ses:GetArchiveMessageContent
+              - ses:GetArchiveSearchResults
+              - support:DescribeAttachment
+              - tax:GetTaxRegistrationDocument
+              - transcribe:GetCallAnalyticsJob
+              - transcribe:GetTranscriptionJob
+              - translate:GetParallelData
+              - translate:GetTerminology
+              - workdocs:DescribeComments
+              - workdocs:DescribeDocumentVersions
+              # Inputs, outputs and payloads of workflow runs.
+              - lambda:GetDurableExecution
+              - lambda:GetDurableExecutionHistory
+              - lambda:GetDurableExecutionState
+              - states:DescribeExecution
+              - states:GetExecutionHistory
+              - swf:GetWorkflowExecutionHistory
+              # End users of the customer's product.
+              - cognito-idp:AdminGet*
+              - cognito-idp:AdminList*
+              - cognito-idp:ListUsers*
+              - cognito-sync:ListRecords
+              - connect:GetContactAttributes
+              - connect:ListDataTablePrimaryValues
+              - connect:ListDataTableValues
+              - connect:ListRealtimeContactAnalysisSegments
+              - connect:ListRealtimeContactAnalysisSegmentsV2
+              - lex:GetSession
+              - lex:GetUtterancesView
+              - mobiletargeting:GetEndpoint
+              - mobiletargeting:GetUserEndpoints
+              - ses:GetContact
+              - ses:ListContacts
+              - ses:ListMembersOfAddressList
+              - ses:ListSuppressedDestinations
+              - sms-voice:DescribeOptedOutNumbers
+              - sns:ListPhoneNumbersOptedOut
+              # Code, as lambda:GetFunction above.
+              - cloudfront:GetFunction
+              - cloudfront:GetConnectionFunction
+              - codecommit:DescribeMergeConflicts
+              - codecommit:GetBlobDifferences
+              - greengrass:GetComponentVersionArtifact
+              - inspector2:BatchGetCodeSnippet
+              - tnb:GetSolFunctionPackageContent
+              - lambda:GetLayerVersion
+              - ecr:BatchGetImage
+              - ecr:GetDownloadUrlForLayer
+              - codecommit:GitPull
+              - codecommit:GetFile
+              - codecommit:GetFolder
+              - codecommit:GetBlob
+              - codeartifact:ReadFromRepository
+              - codeartifact:GetPackageVersionAsset
+            Resource: '*'
 
 Outputs:
   IntegrationRoleArn:

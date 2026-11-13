@@ -190,6 +190,32 @@ class ContractTest(unittest.TestCase):
             "the sts:SetSourceIdentity statement requires sts:ExternalId",
         )
 
+    def test_a_renamed_deny_policy_fails(self):
+        self.assertFails(
+            replace("['better-stack-ai-sre-deny-data-', ", "['better-stack-ai-sre-denies-', "),
+            "AiSreDenyDataPolicy's ManagedPolicyName changed",
+        )
+
+    def test_a_deny_policy_detached_from_the_role_fails(self):
+        self.assertFails(
+            replace("        - !Ref AiSreDenyStoredDataPolicy\n", ""),
+            "AiSreDenyStoredDataPolicy is not attached to the role in both settings",
+        )
+
+    def test_a_deny_policy_attached_in_one_setting_only_fails(self):
+        self.assertFails(
+            replace(
+                "        - !Ref AiSreDenyStoredDataPolicy\n",
+                "        - !If [DenyConfigurationValues, !Ref AiSreDenyStoredDataPolicy, !Ref 'AWS::NoValue']\n",
+            ),
+            "AiSreDenyStoredDataPolicy is not attached to the role in both settings",
+        )
+
+    def test_a_removed_deny_policy_fails(self):
+        start = TEMPLATE.index("  AiSreDenyStoredDataPolicy:\n")
+        end = TEMPLATE.index("\nOutputs:\n")
+        self.assertFails(TEMPLATE[:start] + TEMPLATE[end:], "resource AiSreDenyStoredDataPolicy (AWS::IAM::ManagedPolicy) is missing")
+
     def test_a_template_release_yml_cannot_stamp_fails(self):
         self.assertFails(
             replace("      Version: 0.0.0-dev\n", "      Version: '0.0.0-dev'\n"),

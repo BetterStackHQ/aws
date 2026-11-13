@@ -5,8 +5,9 @@ Fails when a parameter is removed or renamed, a parameter has no default (only E
 is not recorded in the contract yet, a recorded parameter's type, default, pattern or allowed values change, the
 RoleName expression or the ExternalId pattern change, the version tag key changes, the trust is no longer the two
 recorded statements (sts:AssumeRole with the external ID and the callers' path conditions; sts:SetSourceIdentity with
-the callers' path and a source identity starting bs-), the role's logical ID or the IntegrationRoleArn output go, or
-the Release mapping loses the line the Release workflow stamps.
+the callers' path and a source identity starting bs-), a deny policy of the stack is renamed, removed or not attached
+to the role in both settings, the role's logical ID or the IntegrationRoleArn output go, or the Release mapping loses
+the line the Release workflow stamps.
 
 A change to any of these is a change of contract: make it on purpose, in contract.json, in the same pull request.
 
@@ -161,6 +162,27 @@ def check_trust_shape(statements):
     return errors
 
 
+def check_stack_policies(template, contract):
+    """The stack's deny policies keep their names and stay attached to the role in both settings."""
+    errors = []
+    resources = template.get("Resources", {})
+    attached = resources.get(contract["role_logical_id"], {}).get("Properties", {}).get("ManagedPolicyArns", [])
+    for logical_id, name in contract.get("stack_policies", {}).items():
+        policy = resources.get(logical_id)
+        if not policy or policy.get("Type") != "AWS::IAM::ManagedPolicy":
+            errors.append(f"resource {logical_id} (AWS::IAM::ManagedPolicy) is missing: the role would lose its denies")
+            continue
+        if policy.get("Properties", {}).get("ManagedPolicyName") != name:
+            errors.append(
+                f"{logical_id}'s ManagedPolicyName changed to {json.dumps(policy.get('Properties', {}).get('ManagedPolicyName'))}, "
+                f"the contract records {json.dumps(name)}: an update would replace the policy"
+            )
+        # A plain list item, not inside an Fn::If, so that it is attached whatever AllowConfigurationValues is.
+        if {"Ref": logical_id} not in (attached if isinstance(attached, list) else []):
+            errors.append(f"{logical_id} is not attached to the role in both settings (a plain !Ref in ManagedPolicyArns)")
+    return errors
+
+
 def check_outputs_and_stamp(template, text, contract):
     errors = []
     for name in contract["outputs"]:
@@ -175,6 +197,7 @@ def check(template, text, contract):
     return (
         check_parameters(template, contract)
         + check_role(template, contract)
+        + check_stack_policies(template, contract)
         + check_outputs_and_stamp(template, text, contract)
     )
 
