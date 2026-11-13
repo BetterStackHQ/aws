@@ -316,7 +316,13 @@ CHECKS = [
         "connect:ListContactReferences", "ec2:DescribeIpamExternalResourceVerificationTokens",
         "ec2:DescribeVerifiedAccessTrustProviders", "grafana:DescribeWorkspace", "grafana:ListWorkspaces",
         "kms:GetParametersForImport", "lightsail:GetRelationalDatabase", "lightsail:GetRelationalDatabases",
-        "medialive:DescribeInputDeviceThumbnail", "rds:DescribeTenantDatabases",
+        "medialive:DescribeInputDeviceThumbnail", "rds:DescribeTenantDatabases", "dms:DescribeEndpoints",
+        "ds:DescribeDirectories",
+    ]],
+    # Content like logs, readable with true only: whatever was pasted into a Support case, and command output.
+    *[(action, ANY, (), *BROAD) for action in [
+        "support:DescribeCases", "support:DescribeCommunication", "support:DescribeCommunications",
+        "support:SearchForCases", "codebuild:BatchGetCommandExecutions", "codebuild:ListCommandExecutionsForSandbox",
     ]],
     # With true: a sample read in each service family only ReadOnlyAccess grants, and the reads it lacks that
     # BetterStackAiSreBroadAccess adds. With false: none of them.

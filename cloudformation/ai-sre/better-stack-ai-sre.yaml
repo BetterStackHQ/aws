@@ -513,6 +513,9 @@ Resources:
               - lightsail:GetRelationalDatabase
               - lightsail:GetRelationalDatabases
               - rds:DescribeTenantDatabases
+              # DMS endpoint passwords and the Directory Service RADIUS shared secret.
+              - dms:DescribeEndpoints
+              - ds:DescribeDirectories
               # Identity provider client secrets.
               - cognito-idp:DescribeIdentityProvider
               - cognito-idp:GetIdentityProviderByIdentifier

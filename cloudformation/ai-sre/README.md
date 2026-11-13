@@ -90,7 +90,7 @@ These reads are denied explicitly, in both settings, so that `ReadOnlyAccess` or
 - CloudWatch Omni query results (`cloudwatch:GetTelemetryQueryResults`), which can hold rows of a query someone else ran, even with `logs:Unmask`
 - X-Ray sampling targets (`xray:GetSamplingTargets`), which report sampling statistics and change how X-Ray allocates your sampling quota
 - Credentials and tokens other services hand out: ECR and CodeArtifact tokens, Cognito client secrets, tokens and identity credentials, API keys (AWS WAF, AppSync), Redshift, Lake Formation and S3 Access Grants credentials, Lightsail and GameLift access, IVS stream keys, Storage Gateway CHAP credentials
-- More credentials and tokens: identity provider client secrets (Cognito, WorkSpaces Web), Amplify basic-auth credentials, MediaPackage ingest passwords, Chime and GameLift session tokens, push notification keys and device tokens (Pinpoint, SNS), CodePipeline job credentials, Snowball unlock codes and manifests, CloudHSM certificates, OpsWorks app keys, IoT Wireless device keys, IPAM verification tokens, Verified Access trust provider secrets, Managed Grafana workspaces, KMS key import parameters, Lightsail and RDS tenant database master user details
+- More credentials and tokens: identity provider client secrets (Cognito, WorkSpaces Web), Amplify basic-auth credentials, MediaPackage ingest passwords, Chime and GameLift session tokens, push notification keys and device tokens (Pinpoint, SNS), CodePipeline job credentials, Snowball unlock codes and manifests, CloudHSM certificates, OpsWorks app keys, IoT Wireless device keys, IPAM verification tokens, Verified Access trust provider secrets, Managed Grafana workspaces, KMS key import parameters, Lightsail and RDS tenant database master user details, DMS endpoint passwords, the Directory Service RADIUS shared secret
 - Query results and stored content: Athena results, OpenSearch documents, Keyspaces, DAX, QLDB, SimpleDB, Timestream, Redshift Data API results, Glacier, EBS snapshot blocks, HealthLake, Kinesis Video, IoT shadows and SiteWise values, SageMaker Feature Store records, Bedrock and Bedrock AgentCore memory and knowledge bases
 - More stored content: Cloud Directory, CloudFront KeyValueStore, Data Exchange assets, DynamoDB vector search, Kendra, Personalize and Forecast queries, Fraud Detector events, Glue interactive session statements, IoT retained messages and topic rules, SES archived mail, Support case attachments, Transcribe jobs, Translate data, WorkDocs comments and versions, S3 on Outposts and MediaPackage objects, MediaLive input device thumbnails
 - Payloads of Lambda durable executions
@@ -102,6 +102,15 @@ These reads are denied explicitly, in both settings, so that `ReadOnlyAccess` or
 With `AllowConfigurationValues=false`, nothing allows `kms:Decrypt` through any service but CloudWatch Logs, so resources under your own key stay unreadable there unless your key policy grants the role directly. Lambda decrypts a function's environment variables as the caller, so environment variables under the default `aws/lambda` key are readable in both settings.
 
 The template's [CI](#template-contract) keeps [`read-only-access-review.tsv`](read-only-access-review.tsv), a reviewed verdict on every action `ReadOnlyAccess` and the inline policies grant, and fails when AWS adds one that hasn't been reviewed yet. `ReadOnlyAccess` is large, and the review can miss a read that returns secrets or stored data.
+
+### Content like logs
+
+With `AllowConfigurationValues=true`, the role can also read two kinds of content, which Better Stack treats like logs rather than configuration:
+
+- Support cases (`support:DescribeCases`, `DescribeCommunication`, `DescribeCommunications`, `SearchForCases`). These return whatever you or your team pasted into a case.
+- CodeBuild command executions (`codebuild:BatchGetCommandExecutions`, `ListCommandExecutionsForSandbox`). These return the commands' output.
+
+With `AllowConfigurationValues=false`, the role can't read either.
 
 ### Configuration values
 
@@ -116,9 +125,11 @@ Read-only isn't secret-free. With `AllowConfigurationValues=true`, the default, 
 - CloudWatch telemetry pipeline configurations (`observabilityadmin:GetTelemetryPipeline`)
 - Cloud Control resource request status, which carries the resource's properties (`cloudformation:ListResourceRequests`, `GetResourceRequestStatus`)
 
-With `AllowConfigurationValues=false`, the role has no `ReadOnlyAccess` at all, and the stack attaches a deny on every read Better Stack knows returns them:
+With `AllowConfigurationValues=false`, the role has no `ReadOnlyAccess` at all, and each of these reads is either denied or not granted. The ones the role's fixed list would otherwise grant are denied explicitly:
 
 `lambda:ListFunctions`, `lambda:ListVersionsByFunction`, `lambda:GetFunctionConfiguration`, `ecs:DescribeTaskDefinition`, `ecs:DescribeTasks`, `ecs:DescribeExpressGatewayService`, `ecs:DescribeDaemonTaskDefinition`, `batch:DescribeJobDefinitions`, `batch:DescribeJobs`, `batch:DescribeServiceJob`, `lambda:ListMicrovmImageVersions`, `ec2:DescribeInstanceAttribute`, `ec2:DescribeLaunchTemplateVersions`, `ec2:DescribeSpotFleetRequests`, `ec2:DescribeSpotInstanceRequests`, `autoscaling:DescribeLaunchConfigurations`, `cloudformation:DescribeStacks`, `cloudformation:DescribeChangeSet`, `cloudformation:DescribeStackResource`, `cloudformation:DescribeStackEvents`, `cloudformation:DescribeEvents`, `cloudformation:ListExports`, `cloudformation:DescribeStackResourceDrifts`, `cloudformation:ListStackInstanceResourceDrifts`, `cloudformation:DescribeStackSet`, `cloudformation:DescribeStackInstance`, `cloudformation:ListResources`, `cloudformation:ListResourceRequests`, `eks:DescribeAddon`, `events:ListTargetsByRule`, `firehose:DescribeDeliveryStream`, and API Gateway stages (`/restapis/*/stages*`, `/apis/*/stages*`).
+
+The rest, such as Glue jobs, CodeBuild projects, EMR clusters, Security Hub findings, Step Functions and SWF executions, IoT commands and telemetry pipelines, aren't granted at all: they're outside the fixed list, so no deny is needed.
 
 AI SRE then can't see configuration changes in those services, or a stack's deployment history: stack events carry each resource's properties. CloudTrail event history stays readable in both settings, and the request parameters AWS records there for some calls can include configuration values. A later release that adds a read to this list is a fix to the same rule.
 
