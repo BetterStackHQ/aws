@@ -179,9 +179,12 @@ jobs:
       # stack deletion starts.
       - name: "[Setup] Measure how long ago the previous run deleted its stack"
         run: |
-          LAST=$(aws cloudformation list-stacks --stack-status-filter DELETE_COMPLETE --query "max(StackSummaries[?starts_with(StackName, 'e2e-gh')].DeletionTime)" --output text)
-          [ "$LAST" != None ] || { echo "no earlier stack in this account, everything is checked strictly"; exit 0; }
-          AGE=$((($(date +%s) - $(date -d "$LAST" +%s)) / 60))
+          # JSON, because with --output text the CLI runs --query on each page of the list on its own and prints one
+          # max per page once the account has more than one page of deleted stacks.
+          LAST=$(aws cloudformation list-stacks --stack-status-filter DELETE_COMPLETE --query "max(StackSummaries[?starts_with(StackName, 'e2e-gh')].DeletionTime)" --output json | jq -r .)
+          [ "$LAST" != null ] || { echo "no earlier stack in this account, everything is checked strictly"; exit 0; }
+          DELETED=$(date -d "$LAST" +%s)
+          AGE=$((($(date +%s) - DELETED) / 60))
           [ "$AGE" -lt 65 ] || { echo "the previous stack was deleted $AGE min ago, everything is checked strictly"; exit 0; }
           echo "RECENT_STACK_MIN=$AGE" >> "$GITHUB_ENV"
           echo "the previous stack was deleted $AGE min ago: the static group, aws/spans and CloudTrail delivering nothing will be a warning"
