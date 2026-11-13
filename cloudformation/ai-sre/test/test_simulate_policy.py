@@ -52,7 +52,7 @@ DENIED_WITHOUT_CONFIGURATION_VALUES = [
     "cloudformation:ListStackInstanceResourceDrifts", "cloudformation:DescribeStackSet",
     "cloudformation:DescribeStackInstance", "eks:DescribeAddon",
     "ecs:DescribeExpressGatewayService", "ecs:DescribeDaemonTaskDefinition", "batch:DescribeServiceJob",
-    "lambda:ListMicrovmImageVersions", "cloudformation:DescribeStackResource",
+    "lambda:ListMicrovmImageVersions", "cloudformation:DescribeStackResource", "cloudformation:ListResources",
 ]
 STAGE_PATHS = ["/restapis/abc123/stages", "/restapis/abc123/stages/prod", "/apis/abc123/stages", "/apis/abc123/stages/prod"]
 # Readable in both settings: the investigation reads, the self-read and the MCP token.

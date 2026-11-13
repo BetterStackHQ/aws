@@ -251,6 +251,7 @@ CHECKS = [
     ("cloudformation:ListStackInstanceResourceDrifts", ANY, (), *CONFIG),
     ("cloudformation:DescribeStackSet", ANY, (), *CONFIG),
     ("cloudformation:DescribeStackInstance", ANY, (), *CONFIG),
+    ("cloudformation:ListResources", ANY, (), *CONFIG),
     ("eks:DescribeAddon", ANY, (), *CONFIG),
     ("events:ListTargetsByRule", ANY, (), *CONFIG),
     ("firehose:DescribeDeliveryStream", ANY, (), *CONFIG),

@@ -119,6 +119,23 @@ class ReviewTest(unittest.TestCase):
         self.write_review(self.read_review().replace("alpha:GetThing\tallowed", "alpha:Getthing\tallowed"))
         self.assertFails("FAIL alpha:Getthing is spelled alpha:GetThing in the service reference: use its spelling")
 
+    def test_a_configuration_value_granted_and_not_denied_with_false_fails(self):
+        # beta:Get* in the fixture's allow list grants beta:GetWidget; without the configuration deny it stays readable.
+        with open(self.path("template.yaml"), encoding="utf-8") as f:
+            text = f.read()
+        with open(self.path("template.yaml"), "w", encoding="utf-8") as f:
+            f.write(text.replace("                    - beta:GetWidget\n", "                    - beta:DescribeWidget\n"))
+        self.assertFails(
+            "FAIL beta:GetWidget is a configuration value, and AllowConfigurationValues=false grants it without denying it",
+            static=True,
+        )
+
+    def test_a_configuration_value_not_granted_with_false_passes(self):
+        # alpha:DescribeThing comes only from ReadOnlyAccess, which the role doesn't have with false.
+        self.write_review(self.read_review().replace("alpha:DescribeThing\tallowed", "alpha:DescribeThing\tconfiguration-value"))
+        code, out = self.run_check(static=True)
+        self.assertEqual(code, 0, out)
+
     def test_format_errors_fail(self):
         lines = self.read_review().split("\n")
         cases = {

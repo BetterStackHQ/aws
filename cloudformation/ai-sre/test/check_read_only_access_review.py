@@ -9,7 +9,8 @@ template matches it in both settings) or `configuration-value` (readable in the 
 
 --static checks the list's format, and that every `denied` line is matched by a Deny statement the role has in both
 settings, unconditional and on every resource. A Deny with a condition or a resource scope (the S3 objects outside
-AWSLogs/, say) counts only for a line whose note says what stays readable.
+AWSLogs/, say) counts only for a line whose note says what stays readable. Every `configuration-value` line must be
+denied or not granted with AllowConfigurationValues=false, on the same terms.
 --policy also expands AWS's ReadOnlyAccess (the policy document given, as `iam get-policy-version` returns it) and
 every Allow pattern in the template's inline policies against the service reference, and fails on every action
 that has no line: one AWS added to ReadOnlyAccess, or one an inline wildcard such as cloudwatch:Get* gained since
@@ -102,9 +103,30 @@ def _unconditional(statement):
     return "Condition" not in statement and "NotResource" not in statement and "*" in _as_list(statement.get("Resource", []))
 
 
+def _restricted_errors(entries, template):
+    """configuration-value lines granted with AllowConfigurationValues=false and not denied there."""
+    statements = template_policies.role_statements(False, template)
+    allows = [s for s in statements if s["Effect"] == "Allow"]
+    denies = [s for s in statements if s["Effect"] == "Deny"]
+    errors = []
+    for action, (verdict, note) in entries.items():
+        if verdict != "configuration-value":
+            continue
+        if not any(any(glob_matches(p, action) for p in _as_list(s["Action"])) for s in allows):
+            continue
+        matching = [s for s in denies if any(glob_matches(p, action) for p in _as_list(s["Action"]))]
+        if any(_unconditional(s) for s in matching) or (matching and note):
+            continue
+        errors.append(
+            f"{action} is a configuration value, and AllowConfigurationValues=false grants it without denying it"
+            + (": only a conditional or resource-scoped Deny matches, and the line has no note" if matching else "")
+        )
+    return errors
+
+
 def static_errors(entries, template):
     statements = deny_statements(template)
-    errors = []
+    errors = _restricted_errors(entries, template)
     for action, (verdict, note) in entries.items():
         if verdict != "denied":
             continue
