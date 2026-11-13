@@ -1,0 +1,46 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Parameters:
+  ExternalId:
+    Type: String
+  AllowConfigurationValues:
+    Type: String
+    Default: 'true'
+Conditions:
+  DenyConfigurationValues: !Equals [!Ref AllowConfigurationValues, 'false']
+Resources:
+  AiSreRole:
+    Type: AWS::IAM::Role
+    Properties:
+      ManagedPolicyArns: !If
+        - DenyConfigurationValues
+        - !Ref 'AWS::NoValue'
+        - - !Sub 'arn:${AWS::Partition}:iam::aws:policy/ReadOnlyAccess'
+      Policies:
+        - PolicyName: ReadAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - alpha:List*
+                  - beta:Get*
+                Resource: '*'
+        - PolicyName: DenyDataAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Deny
+                Action:
+                  - alpha:GetSecret*
+                Resource: '*'
+        - !If
+          - DenyConfigurationValues
+          - PolicyName: DenyConfigurationValues
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Deny
+                  Action:
+                    - beta:GetWidget
+                  Resource: '*'
+          - !Ref 'AWS::NoValue'

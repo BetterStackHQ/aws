@@ -3,9 +3,10 @@
 
 Fails when a parameter is removed or renamed, a parameter has no default (only ExternalId may lack one), a parameter
 is not recorded in the contract yet, a recorded parameter's type, default, pattern or allowed values change, the
-RoleName expression or the ExternalId pattern change, the version tag key changes, the trust is no longer the one
-recorded statement (sts:AssumeRole alone, with the external ID and the callers' path conditions), the role's logical ID
-or the IntegrationRoleArn output go, or the Release mapping loses the line the Release workflow stamps.
+RoleName expression or the ExternalId pattern change, the version tag key changes, the trust is no longer the two
+recorded statements (sts:AssumeRole with the external ID and the callers' path conditions; sts:SetSourceIdentity with
+the callers' path and a source identity starting bs-), the role's logical ID or the IntegrationRoleArn output go, or
+the Release mapping loses the line the Release workflow stamps.
 
 A change to any of these is a change of contract: make it on purpose, in contract.json, in the same pull request.
 
@@ -115,23 +116,48 @@ def check_role(template, contract):
     return errors
 
 
+ASSUME = "sts:AssumeRole"
+SOURCE_IDENTITY = "sts:SetSourceIdentity"
+# Better Stack's source identity values start with bs-, and always will.
+SOURCE_IDENTITY_PATTERN = "bs-*"
+
+
 def check_trust_shape(statements):
-    """One statement allowing sts:AssumeRole alone, under the external ID and the callers' path, whatever contract.json
-    says."""
+    """Two statements, whatever contract.json says: sts:AssumeRole alone, under the external ID and the callers' path;
+    and sts:SetSourceIdentity alone, under the callers' path and a bs- value, without the external ID."""
     errors = []
-    if len(statements) != 1:
-        errors.append(f"the trust has {len(statements)} statements, not 1")
-    other_sts = sorted({a for s in statements for a in _actions(s) if a.lower().startswith("sts:") and a != "sts:AssumeRole"})
+    if len(statements) != 2:
+        errors.append(f"the trust has {len(statements)} statements, not 2")
+    other_sts = sorted(
+        {a for s in statements for a in _actions(s) if a.lower().startswith("sts:") and a not in (ASSUME, SOURCE_IDENTITY)}
+    )
     if other_sts:
-        errors.append(f"the trust allows {other_sts}: it may allow sts:AssumeRole only")
-    for statement in statements:
-        if "sts:AssumeRole" not in _actions(statement):
-            continue
+        errors.append(f"the trust allows {other_sts}: only sts:AssumeRole and sts:SetSourceIdentity")
+    for i, statement in enumerate(statements):
+        actions = _actions(statement)
         conditions = _conditions(statement)
-        if conditions.get(("StringEquals", "sts:ExternalId")) is None:
-            errors.append("the trust statement has no StringEquals sts:ExternalId condition")
-        if conditions.get(("ArnLike", "aws:PrincipalArn")) is None:
-            errors.append("the trust statement has no ArnLike aws:PrincipalArn condition")
+        if ASSUME in actions and SOURCE_IDENTITY in actions:
+            errors.append(
+                f"trust statement {i + 1} merges sts:AssumeRole and sts:SetSourceIdentity: AWS refuses "
+                "SetSourceIdentity in a statement that requires sts:ExternalId"
+            )
+        if ASSUME in actions:
+            if conditions.get(("StringEquals", "sts:ExternalId")) is None:
+                errors.append("the sts:AssumeRole statement has no StringEquals sts:ExternalId condition")
+            if conditions.get(("ArnLike", "aws:PrincipalArn")) is None:
+                errors.append("the sts:AssumeRole statement has no ArnLike aws:PrincipalArn condition")
+        if SOURCE_IDENTITY in actions:
+            if any(key == "sts:ExternalId" for _, key in conditions):
+                errors.append("the sts:SetSourceIdentity statement requires sts:ExternalId, which AWS then refuses")
+            if conditions.get(("ArnLike", "aws:PrincipalArn")) is None:
+                errors.append("the sts:SetSourceIdentity statement has no ArnLike aws:PrincipalArn condition")
+            if conditions.get(("StringLike", "sts:SourceIdentity")) != SOURCE_IDENTITY_PATTERN:
+                errors.append(
+                    f"the sts:SetSourceIdentity statement has no StringLike sts:SourceIdentity '{SOURCE_IDENTITY_PATTERN}' condition"
+                )
+    for action in (ASSUME, SOURCE_IDENTITY):
+        if not any(_actions(s) == {action} for s in statements):
+            errors.append(f"the trust has no statement allowing {action} alone")
     return errors
 
 

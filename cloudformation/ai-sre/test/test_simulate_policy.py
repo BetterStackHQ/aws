@@ -1,18 +1,22 @@
 """simulate_policy.py, offline: a stubbed SimulatePrincipalPolicy that evaluates the template's own policies.
 
-The stub decides each request from better-stack-ai-sre.yaml's policies (explicit deny, then allow, else implicit
-deny; Action and Resource wildcards; StringLike and StringNotLike on the request's context), so the script's
-expectations are checked against the template itself in both AllowConfigurationValues settings, and against the
-lists of the allow and deny tables below.
+The stub decides each request from better-stack-ai-sre.yaml's policies, plus AWS's ReadOnlyAccess (as
+fixtures/read-only-access-policy.json holds it) where the template attaches it: explicit deny, then allow, else
+implicit deny; Action, Resource and NotResource wildcards; StringEquals, StringLike and StringNotLike on the
+request's context. So the script's expectations are checked against the template itself in both
+AllowConfigurationValues settings, and against the lists of the allow and deny tables below.
 """
 
 import io
-import re
+import json
+import os
 import unittest
 
-import cfn_yaml
-import check_contract
 import simulate_policy as sim
+import template_policies
+from service_reference import glob_matches
+
+READ_ONLY_ACCESS_FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "read-only-access-policy.json")
 
 ACCOUNT = "123456789012"
 EXTERNAL_ID = "bs-ai-sre-1a2b3c4d-0000-4000-8000-00000000abcd"
@@ -26,6 +30,15 @@ DENIED_IN_EVERY_SETTING = [
     "dynamodb:PartiQLSelect", "dynamodb:GetRecords", "kinesis:SubscribeToShard",
     "cloudwatch:GetSpaceCredentials", "cloudwatch:GetSpaceCredentialsForOrganization", "cloudwatch:GetSpaceDataAccess",
     "cloudwatch:GetTelemetryQueryResults", "xray:GetSamplingTargets",
+    # Credentials and tokens other services hand out.
+    "ecr:GetAuthorizationToken", "codeartifact:GetAuthorizationToken", "cognito-idp:ListUserPoolClientSecrets",
+    "cognito-idp:GetClientToken", "wafv2:GetDecryptedAPIKey", "appsync:ListApiKeys", "s3express:CreateSession",
+    "secretsmanager:BatchGetSecretValue", "redshift:GetClusterCredentials", "directconnect:DescribeVirtualInterfaces",
+    # Stored content, end users and code.
+    "athena:GetQueryResults", "cassandra:Select", "dax:Query", "qldb:GetBlock", "timestream:Select",
+    "glacier:GetJobOutput", "es:ESHttpGet", "kinesisvideo:GetMedia", "healthlake:ReadResource",
+    "cognito-idp:AdminGetUser", "cognito-idp:ListUsers", "lambda:GetLayerVersion", "ecr:BatchGetImage",
+    "codecommit:GetFile", "codeartifact:GetPackageVersionAsset",
 ]
 DENIED_API_GATEWAY_PATHS = ["/apikeys", "/apikeys/key123", "/usageplans/plan123/keys", "/usageplans/plan123/keys/key123"]
 DENIED_WITHOUT_CONFIGURATION_VALUES = [
@@ -48,40 +61,29 @@ ALLOWED_IN_EVERY_SETTING = [
     "xray:GetTraceSummaries", "xray:BatchGetTraces", "cloudformation:DescribeStackResources", "cloudformation:ListStacks",
     "application-autoscaling:DescribeScalableTargets", "iam:ListAccountAliases", "account:ListRegions",
 ]
-NEVER_ALLOWED = ["logs:TestMetricFilter", "signin:AuthorizeOAuth2Access"]
-
-
-def resolve(value, refs, conditions):
-    """The template's policies with the intrinsic functions they use resolved."""
-    if isinstance(value, list):
-        return [r for r in (resolve(v, refs, conditions) for v in value) if r is not NO_VALUE]
-    if isinstance(value, dict):
-        if len(value) == 1:
-            (fn, arg), = value.items()
-            if fn == "Ref":
-                return refs[arg]
-            if fn == "Fn::If":
-                return resolve(arg[1] if conditions[arg[0]] else arg[2], refs, conditions)
-            if fn in ("Fn::Join", "Fn::Select", "Fn::Split"):
-                return check_contract._evaluate(value, refs)
-        return {k: resolve(v, refs, conditions) for k, v in value.items()}
-    return value
-
-
-NO_VALUE = object()
+NEVER_ALLOWED = ["signin:AuthorizeOAuth2Access"]
+# Only ReadOnlyAccess grants these: readable with true, not with false.
+READ_ONLY_ACCESS_ONLY = ["codedeploy:GetDeployment", "iam:ListRoles", "logs:TestMetricFilter", "organizations:DescribeOrganization"]
+# BetterStackAiSreBroadAccess, with true only.
+BROAD_ACCESS = [
+    "cloudtrail:StartQuery", "cloudtrail:CancelQuery", "pi:GetPerformanceAnalysisReport",
+    "pi:ListPerformanceAnalysisReports", "eks-mcp:InvokeMcp", "eks-mcp:CallReadOnlyTool", "ecs-mcp:UseMcp",
+    "ecs-mcp:InvokeReadOnlyTools", "application-signals-mcp:InvokeMcp", "application-signals-mcp:CallReadOnlyTool",
+]
 
 
 def statements(allow_configuration_values):
-    template = cfn_yaml.load(check_contract.DEFAULT_TEMPLATE)
-    refs = {"AWS::AccountId": ACCOUNT, "AWS::Partition": "aws", "ExternalId": EXTERNAL_ID, "AWS::NoValue": NO_VALUE}
-    conditions = {"DenyConfigurationValues": not allow_configuration_values}
-    policies = resolve(template["Resources"]["AiSreRole"]["Properties"]["Policies"], refs, conditions)
-    return [s for policy in policies for s in policy["PolicyDocument"]["Statement"]]
+    """The role's inline statements and, where the template attaches it, ReadOnlyAccess's."""
+    found = template_policies.inline_statements(allow_configuration_values)
+    for arn in template_policies.managed_policy_arns(allow_configuration_values):
+        assert arn == template_policies.READ_ONLY_ACCESS_ARN, f"the stub knows no managed policy {arn}"
+        with open(READ_ONLY_ACCESS_FIXTURE, encoding="utf-8") as f:
+            found += json.load(f)["PolicyDocument"]["Statement"]
+    return found
 
 
 def glob(pattern, value, ignore_case=False):
-    regex = re.escape(pattern).replace(r"\*", ".*").replace(r"\?", ".")
-    return re.fullmatch(regex, value, re.IGNORECASE if ignore_case else 0) is not None
+    return glob_matches(pattern, value, ignore_case)
 
 
 def as_list(value):
@@ -92,6 +94,10 @@ def conditions_hold(statement, context):
     for operator, keys in statement.get("Condition", {}).items():
         for key, patterns in keys.items():
             value = context.get(key)
+            if operator == "StringEquals":
+                if value not in as_list(patterns):
+                    return False
+                continue
             hit = value is not None and any(glob(p, value) for p in as_list(patterns))
             if operator == "StringLike" and not hit:
                 return False
@@ -104,9 +110,13 @@ def conditions_hold(statement, context):
 
 def decide(policy_statements, action, resource, context):
     def applies(s):
+        if "NotResource" in s:
+            resource_ok = not any(glob(p, resource) for p in as_list(s["NotResource"]))
+        else:
+            resource_ok = any(glob(p, resource) for p in as_list(s["Resource"]))
         return (
             any(glob(p, action, ignore_case=True) for p in as_list(s["Action"]))
-            and any(glob(p, resource) for p in as_list(s["Resource"]))
+            and resource_ok
             and conditions_hold(s, context)
         )
 
@@ -167,10 +177,37 @@ class SimulatePolicyTest(unittest.TestCase):
         self.assertEqual(failures, 1)
         self.assertIn("FAIL cloudwatch:DescribeAlarms on *: implicitDeny, expected allowed", out)
 
-    def test_the_configuration_deny_must_be_attached_when_off(self):
-        # A role deployed with true, checked as if it were false: every configuration read is a failure.
+    def test_a_role_deployed_with_true_fails_every_check_that_differs_with_false(self):
+        # The configuration deny and the broad reads are what the setting switches; checked as if it were false, a
+        # role deployed with true fails exactly the checks whose two decisions differ.
         failures, out = self.run_script(StubIam(True), False)
-        self.assertEqual(failures, len(DENIED_WITHOUT_CONFIGURATION_VALUES) + len(STAGE_PATHS), out)
+        self.assertEqual(failures, sum(1 for _, _, _, t, f in sim.CHECKS if t != f), out)
+        self.assertIn("FAIL codedeploy:GetDeployment on *: allowed, expected implicitDeny", out)
+
+    def test_the_restricted_role_has_no_read_only_access(self):
+        self.assertEqual(template_policies.managed_policy_arns(False), [])
+        self.assertEqual(template_policies.managed_policy_arns(True), [template_policies.READ_ONLY_ACCESS_ARN])
+        for action in READ_ONLY_ACCESS_ONLY + BROAD_ACCESS:
+            self.assertEqual(expected(action), [sim.BROAD], action)
+
+    def test_s3_objects_are_readable_under_aws_logs_only_and_only_with_true(self):
+        self.assertEqual(expected("s3:GetObject", "arn:aws:s3:::b/AWSLogs/1/x"), [sim.BROAD])
+        self.assertEqual(expected("s3:GetObject", "arn:aws:s3:::b/p/AWSLogs/1/x"), [sim.BROAD])
+        for resource in ("arn:aws:s3:::b/data/x", sim.ANY, sim.ACCESS_POINT_LOG_OBJECT, sim.OBJECT_LAMBDA_LOG_OBJECT):
+            self.assertEqual(expected("s3:GetObject", resource), [(sim.DENY, sim.DENY)], resource)
+        self.assertEqual(expected("s3:ListBucket", "arn:aws:s3:::b"), [sim.BROAD])
+
+    def test_kms_decrypt_through_each_named_service_with_true_only(self):
+        for service in sim.KMS_BROAD_SERVICES:
+            rows = [(t, f) for a, _, c, t, f in sim.CHECKS if a == "kms:Decrypt" and c == sim.via(service)]
+            self.assertEqual(rows, [sim.BROAD], service)
+        for service in ("secretsmanager", "cloudtrail"):
+            rows = [(t, f) for a, _, c, t, f in sim.CHECKS if a == "kms:Decrypt" and c == sim.via(service)]
+            self.assertEqual(rows, [(sim.DENY, sim.DENY)], service)
+
+    def test_the_inline_policies_fit_iam_quota_in_both_settings(self):
+        for allow in (True, False):
+            self.assertLess(template_policies.inline_size(allow), 10240, f"AllowConfigurationValues={allow}")
 
     def test_kms_checks_send_the_via_service_context(self):
         iam = StubIam(True)
@@ -213,7 +250,7 @@ class SimulatePolicyTest(unittest.TestCase):
         self.assertEqual(expected("signin:CreateOAuth2Token", sim.MCP), [(sim.ALLOW, sim.ALLOW)])
         for action in ("iam:GetRole", "iam:ListRolePolicies", "iam:GetRolePolicy", "iam:ListAttachedRolePolicies"):
             self.assertEqual(expected(action, sim.SELF), [(sim.ALLOW, sim.ALLOW)], action)
-            self.assertEqual(expected(action, sim.OTHER_ROLE), [(sim.NONE, sim.NONE)], action)
+            self.assertEqual(expected(action, sim.OTHER_ROLE), [sim.BROAD], action)
 
     def test_every_deny_in_the_template_has_a_check(self):
         # A deny added to the template without a CHECKS entry would never reach the policy simulator.
@@ -223,6 +260,16 @@ class SimulatePolicyTest(unittest.TestCase):
             if statement["Effect"] != "Deny":
                 continue
             for action in as_list(statement["Action"]):
+                if "NotResource" in statement:
+                    # A check on a resource outside the NotResource patterns, which the deny then covers.
+                    excluded = as_list(statement["NotResource"])
+                    covered = any(
+                        glob(action, a, ignore_case=True) and not any(glob(p, r) for p in excluded) and sim.DENY in (t, f)
+                        for a, r, t, f in checks
+                    )
+                    if not covered:
+                        missing.append(f"{statement['Sid']}: {action} outside {excluded}")
+                    continue
                 for resource in as_list(statement["Resource"]):
                     if not any(
                         glob(action, a, ignore_case=True) and glob(resource, r) and sim.DENY in (t, f)

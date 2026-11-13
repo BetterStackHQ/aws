@@ -1,0 +1,4 @@
+[
+  {"service": "alpha", "serviceName": "Alpha", "url": "https://example.invalid/alpha.json"},
+  {"service": "beta", "serviceName": "Beta", "url": "https://example.invalid/beta.json"}
+]

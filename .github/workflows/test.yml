@@ -55,6 +55,11 @@ jobs:
         working-directory: cloudformation/ai-sre/test
         run: python check_contract.py
 
-      - name: Test the contract check and the policy simulator script
+      - name: Test the contract check, the policy simulator script and the ReadOnlyAccess review check
         working-directory: cloudformation/ai-sre/test
         run: python -m unittest -v
+
+      # The full drift check needs AWS credentials and runs in ai-sre-read-only-access-drift.yml.
+      - name: The reviewed ReadOnlyAccess list is well formed and its denied lines are denied
+        working-directory: cloudformation/ai-sre/test
+        run: python check_read_only_access_review.py --static

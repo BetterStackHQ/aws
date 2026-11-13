@@ -1,0 +1,79 @@
+name: "AI SRE ReadOnlyAccess drift"
+
+# The AI SRE role attaches AWS's managed ReadOnlyAccess in its default setting, and AWS adds reads to that policy as it
+# launches services; the change reaches every role that has it. cloudformation/ai-sre/read-only-access-review.tsv is the
+# reviewed verdict on each action the role can be granted. This job reads ReadOnlyAccess's default version, expands it
+# and every Allow wildcard in the template's inline policies against AWS's service reference, and fails when an action
+# has no line in the list yet, so that each new read is reviewed (and denied, if it returns secrets or stored data)
+# before customers rely on the role. The schedule catches AWS's changes; pull requests catch changes to the template.
+#
+# AWS: the E2E workflow's role (see e2e.yml), for iam:GetPolicy and iam:GetPolicyVersion on the AWS managed policy only.
+# Pull requests from forks are skipped: they get no OIDC token.
+
+on:
+  schedule:
+    - cron: '40 5 * * *'
+  push:
+    branches: [main]
+    paths:
+      - cloudformation/ai-sre/**
+      - .github/workflows/ai-sre-read-only-access-drift.yml
+  pull_request:
+    paths:
+      - cloudformation/ai-sre/**
+      - .github/workflows/ai-sre-read-only-access-drift.yml
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+  actions: read
+
+env:
+  AWS_REGION: us-east-1
+  AWS_ROLE_ARN: arn:aws:iam::251917137055:role/github-actions-e2e
+  POLICY_ARN: arn:aws:iam::aws:policy/ReadOnlyAccess
+
+jobs:
+  drift:
+    name: ReadOnlyAccess against the reviewed list
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Install PyYAML
+        run: pip install pyyaml==6.0.3
+
+      - uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Read ReadOnlyAccess's default version
+        run: |
+          VERSION=$(aws iam get-policy --policy-arn "$POLICY_ARN" --query Policy.DefaultVersionId --output text)
+          aws iam get-policy-version --policy-arn "$POLICY_ARN" --version-id "$VERSION" --query PolicyVersion.Document --output json > read-only-access.json
+          echo "POLICY_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "ReadOnlyAccess default version $VERSION, $(jq '[.Statement[].Action] | flatten | length' read-only-access.json) action patterns"
+
+      - name: Every action ReadOnlyAccess and the inline policies grant has a reviewed line
+        working-directory: cloudformation/ai-sre/test
+        run: python check_read_only_access_review.py --policy "$GITHUB_WORKSPACE/read-only-access.json" --policy-version "$POLICY_VERSION" --cache-dir "$RUNNER_TEMP/service-reference"
+
+  notify-linear:
+    if: ${{ failure() && (github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) }}
+    needs: [drift]
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+    uses: ./.github/workflows/notify_linear_failure.yml
+    with:
+      test_name: AI SRE ReadOnlyAccess drift
+    secrets: inherit

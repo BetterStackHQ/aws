@@ -2,9 +2,11 @@
 """Asserts what a deployed Better Stack AI SRE role may and may not do, with IAM's policy simulator.
 
 Every read the role must allow, every explicit deny, and every read AllowConfigurationValues=false must deny is
-listed in CHECKS below with the decision expected under each setting of AllowConfigurationValues. The script asks
+listed in CHECKS below with the decision expected under each setting of AllowConfigurationValues. With true the role
+also has AWS's ReadOnlyAccess, so reads only that policy grants are allowed there and not with false. The script asks
 iam:SimulatePrincipalPolicy for each one on the given role and fails on any decision that differs. The simulator
-evaluates the role's own policies and its permissions boundary, not service control policies or resource policies.
+evaluates the role's own policies (inline and attached) and its permissions boundary, not service control policies or
+resource policies.
 
 Usage: simulate_policy.py --role-arn ARN --allow-configuration-values true|false [--region us-east-1]
 Needs iam:SimulatePrincipalPolicy on the role. Calls nothing else.
@@ -21,6 +23,8 @@ ANY = "*"
 SELF = "{self}"
 OTHER_ROLE = "arn:aws:iam::{account}:role/some-other-role"
 MCP = "arn:aws:signin:{region}:{account}:service-principal/aws-mcp.amazonaws.com"
+ACCESS_POINT_LOG_OBJECT = "arn:aws:s3:{region}:{account}:accesspoint/ap/object/AWSLogs/{account}/x"
+OBJECT_LAMBDA_LOG_OBJECT = "arn:aws:s3-object-lambda:{region}:{account}:accesspoint/olap/object/AWSLogs/{account}/x"
 
 
 def apigw(path):
@@ -36,6 +40,9 @@ def both(decision):
 
 
 CONFIG = (ALLOW, DENY)  # readable by default, denied with AllowConfigurationValues=false
+BROAD = (ALLOW, NONE)  # granted by ReadOnlyAccess or BetterStackAiSreBroadAccess, so only with true
+# kms:ViaService values the default setting may decrypt through, besides CloudWatch Logs (allowed in both).
+KMS_BROAD_SERVICES = ["lambda", "s3", "xray", "rds", "states", "glue"]
 
 # (action, resource, context, decision with true, decision with false)
 CHECKS = [
@@ -101,35 +108,44 @@ CHECKS = [
     ("application-autoscaling:DescribeScalableTargets", ANY, (), *both(ALLOW)),
     ("iam:ListAccountAliases", ANY, (), *both(ALLOW)),
     ("account:ListRegions", ANY, (), *both(ALLOW)),
-    # The role's own description and policies, and no other role's.
+    # The role's own description and policies; other roles' only through ReadOnlyAccess.
     ("iam:GetRole", SELF, (), *both(ALLOW)),
     ("iam:ListRolePolicies", SELF, (), *both(ALLOW)),
     ("iam:GetRolePolicy", SELF, (), *both(ALLOW)),
     ("iam:ListAttachedRolePolicies", SELF, (), *both(ALLOW)),
-    ("iam:GetRole", OTHER_ROLE, (), *both(NONE)),
-    ("iam:ListRolePolicies", OTHER_ROLE, (), *both(NONE)),
-    ("iam:GetRolePolicy", OTHER_ROLE, (), *both(NONE)),
-    ("iam:ListAttachedRolePolicies", OTHER_ROLE, (), *both(NONE)),
-    # Log groups under a customer managed key, through CloudWatch Logs only.
+    ("iam:GetRole", OTHER_ROLE, (), *BROAD),
+    ("iam:ListRolePolicies", OTHER_ROLE, (), *BROAD),
+    ("iam:GetRolePolicy", OTHER_ROLE, (), *BROAD),
+    ("iam:ListAttachedRolePolicies", OTHER_ROLE, (), *BROAD),
+    # A customer managed key: through CloudWatch Logs in both settings, through the named services with true only
+    # (not denied with false, but nothing allows it), never directly or through any other service.
     ("kms:Decrypt", ANY, via("logs"), *both(ALLOW)),
     ("kms:DescribeKey", ANY, via("logs"), *both(ALLOW)),
-    # Lambda decrypts environments as the caller: not denied, so default-key environments read, and not allowed, so
-    # environments under a customer managed key stay unreadable.
-    ("kms:Decrypt", ANY, via("lambda"), *both(NONE)),
-    ("kms:Decrypt", ANY, via("s3"), *both(DENY)),
+    *[("kms:Decrypt", ANY, via(service), *BROAD) for service in KMS_BROAD_SERVICES],
     ("kms:Decrypt", ANY, via("secretsmanager"), *both(DENY)),
+    ("kms:Decrypt", ANY, via("cloudtrail"), *both(DENY)),
     ("kms:Decrypt", ANY, (), *both(DENY)),
-    ("kms:DescribeKey", ANY, (), *both(NONE)),
+    ("kms:DescribeKey", ANY, (), *BROAD),
     # The MCP token: CreateOAuth2Token alone, for aws-mcp alone.
     ("signin:CreateOAuth2Token", MCP, (), *both(ALLOW)),
     ("signin:AuthorizeOAuth2Access", MCP, (), *both(NONE)),
-    # Dropped from ingestion's read access.
-    ("logs:TestMetricFilter", ANY, (), *both(NONE)),
+    # Dropped from ingestion's read access; ReadOnlyAccess grants it.
+    ("logs:TestMetricFilter", ANY, (), *BROAD),
     # Secrets and customer data, denied explicitly in every setting.
     ("lambda:GetFunction", ANY, (), *both(DENY)),
     ("lambda:InvokeFunction", ANY, (), *both(DENY)),
     ("s3:GetObject", ANY, (), *both(DENY)),
     ("s3:GetObjectVersion", ANY, (), *both(DENY)),
+    # S3 objects: only the logs AWS services deliver under an AWSLogs/ key, and only with true.
+    ("s3:GetObject", "arn:aws:s3:::b/AWSLogs/1/x", (), *BROAD),
+    ("s3:GetObject", "arn:aws:s3:::b/p/AWSLogs/1/x", (), *BROAD),
+    ("s3:GetObjectVersion", "arn:aws:s3:::b/AWSLogs/1/x", (), *BROAD),
+    ("s3:GetObject", "arn:aws:s3:::b/data/x", (), *both(DENY)),
+    ("s3:GetObject", "arn:aws:s3:::b/AWSLogs", (), *both(DENY)),
+    ("s3:GetObject", ACCESS_POINT_LOG_OBJECT, (), *both(DENY)),
+    ("s3:GetObject", OBJECT_LAMBDA_LOG_OBJECT, (), *both(DENY)),
+    ("s3-object-lambda:GetObject", OBJECT_LAMBDA_LOG_OBJECT, (), *both(DENY)),
+    ("s3:ListBucket", "arn:aws:s3:::b", (), *BROAD),
     ("secretsmanager:GetSecretValue", ANY, (), *both(DENY)),
     ("ssm:GetParameter", ANY, (), *both(DENY)),
     ("ssm:GetParameters", ANY, (), *both(DENY)),
@@ -156,6 +172,49 @@ CHECKS = [
     ("cloudwatch:GetSpaceDataAccess", ANY, (), *both(DENY)),
     ("cloudwatch:GetTelemetryQueryResults", ANY, (), *both(DENY)),
     ("xray:GetSamplingTargets", ANY, (), *both(DENY)),
+    # Credentials and tokens other services hand out.
+    *[(action, ANY, (), *both(DENY)) for action in [
+        "ecr:GetAuthorizationToken", "ecr-public:GetAuthorizationToken", "codeartifact:GetAuthorizationToken",
+        "connect:GetFederationToken", "cognito-idp:ListUserPoolClientSecrets", "cognito-idp:DescribeUserPoolClient",
+        "cognito-idp:GetClientToken", "cognito-idp:GetTokensFromRefreshToken",
+        "cognito-idp:GetUserAttributeVerificationCode", "cognito-identity:GetOpenIdToken",
+        "cognito-identity:GetOpenIdTokenForDeveloperIdentity", "wafv2:GetDecryptedAPIKey", "wafv2:ListAPIKeys",
+        "appsync:ListApiKeys", "storagegateway:DescribeChapCredentials",
+        "chime:ListVoiceConnectorTerminationCredentials", "lightsail:GetBucketAccessKeys", "lightsail:GetKeyPair",
+        "lightsail:GetKeyPairs", "lightsail:GetRelationalDatabaseMasterUserPassword",
+        "lightsail:GetInstanceAccessDetails", "lightsail:DownloadDefaultKeyPair", "gamelift:GetComputeAuthToken",
+        "gamelift:GetInstanceAccess", "gamelift:GetComputeAccess", "acm:GetAcmeExternalAccountBindingCredentials",
+        "ssm:GetAccessToken", "license-manager:GetAccessToken", "bedrock:CallWithBearerToken",
+        "bedrock-mantle:CallWithBearerToken", "bedrock-agentcore:GetApiKeyCredentialProvider",
+        "bedrock-agentcore:GetOauth2CredentialProvider", "s3express:CreateSession",
+        "secretsmanager:BatchGetSecretValue", "redshift:GetClusterCredentials",
+        "redshift:GetClusterCredentialsWithIAM", "redshift-serverless:GetCredentials", "ivs:GetStreamKey",
+        "ivs:BatchGetStreamKey", "lakeformation:GetDataAccess", "sns:GetSubscriptionAttributes",
+        "directconnect:DescribeVirtualInterfaces", "ec2:GetVpnConnectionDeviceSampleConfiguration",
+        "ec2:ExportClientVpnClientConfiguration",
+    ]],
+    # Query results and stored content, end users of the customer's product, and code.
+    *[(action, ANY, (), *both(DENY)) for action in [
+        "athena:GetQueryResults", "athena:GetQueryResultsStream", "cassandra:Select", "dax:GetItem",
+        "dax:BatchGetItem", "dax:Query", "dax:Scan", "dynamodb:ReadDataForReplication", "qldb:GetBlock",
+        "qldb:GetRevision", "sdb:Select", "sdb:GetAttributes", "timestream:Select",
+        "redshift-data:GetStatementResult", "glacier:GetJobOutput", "mediastore:GetObject",
+        "s3-object-lambda:GetObjectVersion", "s3vectors:GetVectors", "s3vectors:QueryVectors",
+        "s3tables:GetTableData", "ebs:GetSnapshotBlock", "ebs:ListSnapshotBlocks", "es:ESHttpGet", "es:ESHttpPost",
+        "aoss:APIAccessAll", "aoss:DashboardsAccessAll", "kinesisvideo:GetMedia", "kinesisvideo:GetClip",
+        "healthlake:ReadResource", "healthlake:SearchWithGet", "healthlake:GetHistoryByResourceId",
+        "medical-imaging:GetImageFrame", "medical-imaging:GetImageSetMetadata", "omics:GetReadSet",
+        "iot:GetThingShadow", "iotsitewise:GetAssetPropertyValue", "iotsitewise:GetAssetPropertyValueHistory",
+        "iotanalytics:GetDatasetContent", "iotanalytics:SampleChannelData", "sagemaker:GetRecord",
+        "sagemaker:BatchGetRecord", "bedrock:GetAgentMemory", "bedrock:Retrieve", "bedrock:AgenticRetrieveStream",
+        "bedrock:GetDocumentContent", "bedrock-agentcore:GetMemoryRecord", "bedrock-agentcore:RetrieveMemoryRecords",
+        "bedrock-agentcore:ListMemoryRecords", "bedrock-agentcore:GetEvent", "bedrock-agentcore:ListEvents",
+        "workdocs:GetDocument", "workdocs:GetDocumentVersion", "chime:GetChannelMessage", "chime:ListChannelMessages",
+        "cognito-idp:AdminGetUser", "cognito-idp:AdminListDevices", "cognito-idp:ListUsers",
+        "cognito-idp:ListUsersInGroup", "lambda:GetLayerVersion", "ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer",
+        "codecommit:GitPull", "codecommit:GetFile", "codecommit:GetFolder", "codecommit:GetBlob",
+        "codeartifact:ReadFromRepository", "codeartifact:GetPackageVersionAsset",
+    ]],
     # Configuration values: readable by default, denied with AllowConfigurationValues=false.
     ("lambda:ListFunctions", ANY, (), *CONFIG),
     ("lambda:ListVersionsByFunction", ANY, (), *CONFIG),
@@ -190,6 +249,21 @@ CHECKS = [
     ("apigateway:GET", apigw("/restapis/abc123/stages/prod"), (), *CONFIG),
     ("apigateway:GET", apigw("/apis/abc123/stages"), (), *CONFIG),
     ("apigateway:GET", apigw("/apis/abc123/stages/prod"), (), *CONFIG),
+    # With true: a sample read in each service family only ReadOnlyAccess grants, and the reads it lacks that
+    # BetterStackAiSreBroadAccess adds. With false: none of them.
+    *[(action, ANY, (), *BROAD) for action in [
+        "codedeploy:GetDeployment", "codebuild:BatchGetProjects", "config:DescribeConfigRules",
+        "ecr:DescribeRepositories", "acm:DescribeCertificate", "servicequotas:GetServiceQuota",
+        "cloudfront:GetDistribution", "wafv2:GetWebACL", "es:DescribeDomain", "kafka:DescribeCluster",
+        "mq:DescribeBroker", "redshift:DescribeClusters", "iam:ListRoles", "synthetics:DescribeCanaries",
+        "organizations:DescribeOrganization",
+        "cloudtrail:StartQuery", "cloudtrail:CancelQuery", "pi:GetPerformanceAnalysisReport",
+        "pi:ListPerformanceAnalysisReports", "eks-mcp:InvokeMcp", "eks-mcp:CallReadOnlyTool", "ecs-mcp:UseMcp",
+        "ecs-mcp:InvokeReadOnlyTools", "application-signals-mcp:InvokeMcp",
+        "application-signals-mcp:CallReadOnlyTool",
+    ]],
+    # In BetterStackAiSreBroadAccess too, but the curated logs:List* already grants it in both settings.
+    ("logs:ListLogGroups", ANY, (), *both(ALLOW)),
     # Nothing that changes anything.
     ("ec2:RunInstances", ANY, (), *both(NONE)),
     ("s3:PutObject", ANY, (), *both(NONE)),
