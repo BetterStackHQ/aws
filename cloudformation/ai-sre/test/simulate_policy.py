@@ -22,6 +22,10 @@ ALLOW, DENY, NONE = "allowed", "explicitDeny", "implicitDeny"
 ANY = "*"
 SELF = "{self}"
 OTHER_ROLE = "arn:aws:iam::{account}:role/some-other-role"
+# The stack's own deny policies, named from the role's suffix, and a policy that isn't the stack's.
+DENY_DATA_POLICY = "arn:aws:iam::{account}:policy/better-stack-ai-sre-deny-data-{suffix}"
+DENY_STORED_DATA_POLICY = "arn:aws:iam::{account}:policy/better-stack-ai-sre-deny-stored-data-{suffix}"
+OTHER_POLICY = "arn:aws:iam::{account}:policy/some-other-policy"
 MCP = "arn:aws:signin:{region}:{account}:service-principal/aws-mcp.amazonaws.com"
 ACCESS_POINT_LOG_OBJECT = "arn:aws:s3:{region}:{account}:accesspoint/ap/object/AWSLogs/{account}/x"
 OBJECT_LAMBDA_LOG_OBJECT = "arn:aws:s3-object-lambda:{region}:{account}:accesspoint/olap/object/AWSLogs/{account}/x"
@@ -117,6 +121,11 @@ CHECKS = [
     ("iam:ListRolePolicies", OTHER_ROLE, (), *BROAD),
     ("iam:GetRolePolicy", OTHER_ROLE, (), *BROAD),
     ("iam:ListAttachedRolePolicies", OTHER_ROLE, (), *BROAD),
+    # The stack's own deny policies, in both settings; other policies only through ReadOnlyAccess.
+    *[(action, policy, (), *both(ALLOW)) for action in ("iam:GetPolicy", "iam:GetPolicyVersion")
+      for policy in (DENY_DATA_POLICY, DENY_STORED_DATA_POLICY)],
+    ("iam:GetPolicy", OTHER_POLICY, (), *BROAD),
+    ("iam:GetPolicyVersion", OTHER_POLICY, (), *BROAD),
     # A customer managed key: through CloudWatch Logs in both settings, through the named services with true only
     # (not denied with false, but nothing allows it), never directly or through any other service.
     ("kms:Decrypt", ANY, via("logs"), *both(ALLOW)),
@@ -327,7 +336,8 @@ def parse_role_arn(role_arn):
 
 
 def fill(value, role_arn, region):
-    return role_arn if value == SELF else value.format(account=parse_role_arn(role_arn), region=region)
+    suffix = role_arn.rsplit("-", 1)[-1]
+    return role_arn if value == SELF else value.format(account=parse_role_arn(role_arn), region=region, suffix=suffix)
 
 
 def expectations(role_arn, allow_configuration_values, region):

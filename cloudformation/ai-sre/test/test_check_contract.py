@@ -198,15 +198,15 @@ class ContractTest(unittest.TestCase):
 
     def test_a_deny_policy_detached_from_the_role_fails(self):
         self.assertFails(
-            replace("        - !Ref AiSreDenyStoredDataPolicy\n", ""),
+            replace("\n        - !Ref AiSreDenyStoredDataPolicy\n", "\n"),
             "AiSreDenyStoredDataPolicy is not attached to the role in both settings",
         )
 
     def test_a_deny_policy_attached_in_one_setting_only_fails(self):
         self.assertFails(
             replace(
-                "        - !Ref AiSreDenyStoredDataPolicy\n",
-                "        - !If [DenyConfigurationValues, !Ref AiSreDenyStoredDataPolicy, !Ref 'AWS::NoValue']\n",
+                "\n        - !Ref AiSreDenyStoredDataPolicy\n",
+                "\n        - !If [DenyConfigurationValues, !Ref AiSreDenyStoredDataPolicy, !Ref 'AWS::NoValue']\n",
             ),
             "AiSreDenyStoredDataPolicy is not attached to the role in both settings",
         )

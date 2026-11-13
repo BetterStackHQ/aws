@@ -159,6 +159,15 @@ Resources:
                   - iam:GetRolePolicy
                   - iam:ListAttachedRolePolicies
                 Resource: !Join ['', ['arn:', !Ref 'AWS::Partition', ':iam::', !Ref 'AWS::AccountId', ':role/better-stack-ai-sre-role-', !Select [3, !Split ['-', !Ref ExternalId]]]]
+              # The stack's own deny policies, and no other policy.
+              - Sid: SelfReadDenyPolicies
+                Effect: Allow
+                Action:
+                  - iam:GetPolicy
+                  - iam:GetPolicyVersion
+                Resource:
+                  - !Ref AiSreDenyDataPolicy
+                  - !Ref AiSreDenyStoredDataPolicy
               # Log groups encrypted with a customer managed key, read through CloudWatch Logs only.
               - Sid: EncryptedLogs
                 Effect: Allow

@@ -36,14 +36,21 @@ def resolve(value, refs, conditions):
     return value
 
 
-STACK_POLICY = "stack-managed-policy:"
+def _stack_policy_arns(resources):
+    """{logical id: ARN} of the stack's managed policies."""
+    return {
+        name: f"arn:{SAMPLE_REFS['AWS::Partition']}:iam::{SAMPLE_REFS['AWS::AccountId']}:policy/"
+        + check_contract._evaluate(r["Properties"]["ManagedPolicyName"], SAMPLE_REFS)
+        for name, r in resources.items()
+        if r.get("Type") == "AWS::IAM::ManagedPolicy"
+    }
 
 
 def _resolved(allow_configuration_values, template, logical_id):
     resources = cfn_yaml.load(template)["Resources"]
     refs = dict(SAMPLE_REFS)
-    # A !Ref to one of the stack's managed policies stands for that policy.
-    refs.update({name: STACK_POLICY + name for name, r in resources.items() if r.get("Type") == "AWS::IAM::ManagedPolicy"})
+    # A !Ref to one of the stack's managed policies is its ARN, as CloudFormation returns it.
+    refs.update(_stack_policy_arns(resources))
     conditions = {
         "DenyConfigurationValues": not allow_configuration_values,
         "HasPermissionsBoundary": False,
@@ -67,15 +74,15 @@ def inline_statements(allow_configuration_values, template=check_contract.DEFAUL
 
 def managed_policy_arns(allow_configuration_values, template=check_contract.DEFAULT_TEMPLATE):
     """The AWS managed policies attached to the role; the stack's own ones are in stack_policies()."""
-    arns = role(allow_configuration_values, template).get("ManagedPolicyArns", [])
-    return [a for a in arns if not a.startswith(STACK_POLICY)]
+    stack = set(_stack_policy_arns(cfn_yaml.load(template)["Resources"]).values())
+    return [a for a in role(allow_configuration_values, template).get("ManagedPolicyArns", []) if a not in stack]
 
 
 def stack_policies(allow_configuration_values, template=check_contract.DEFAULT_TEMPLATE):
     """{logical id: resolved properties} of the stack's managed policies attached to the role."""
+    by_arn = {arn: i for i, arn in _stack_policy_arns(cfn_yaml.load(template)["Resources"]).items()}
     arns = role(allow_configuration_values, template).get("ManagedPolicyArns", [])
-    ids = [a[len(STACK_POLICY):] for a in arns if a.startswith(STACK_POLICY)]
-    return {i: _resolved(allow_configuration_values, template, i) for i in ids}
+    return {by_arn[a]: _resolved(allow_configuration_values, template, by_arn[a]) for a in arns if a in by_arn}
 
 
 def role_statements(allow_configuration_values, template=check_contract.DEFAULT_TEMPLATE):
