@@ -261,6 +261,7 @@ CHECKS = [
     ("cloudformation:GetResourceRequestStatus", ANY, (), *BROAD),
     ("eks:DescribeAddon", ANY, (), *CONFIG),
     ("events:ListTargetsByRule", ANY, (), *CONFIG),
+    ("events:DescribeSubscriber", ANY, (), *CONFIG),
     ("firehose:DescribeDeliveryStream", ANY, (), *CONFIG),
     ("apigateway:GET", apigw("/restapis/abc123/stages"), (), *CONFIG),
     ("apigateway:GET", apigw("/restapis/abc123/stages/prod"), (), *CONFIG),
@@ -309,7 +310,9 @@ CHECKS = [
         "sns:ListPhoneNumbersOptedOut", "support:DescribeAttachment", "tax:GetTaxRegistrationDocument",
         "tnb:GetSolFunctionPackageContent", "transcribe:GetCallAnalyticsJob", "transcribe:GetTranscriptionJob",
         "translate:GetParallelData", "translate:GetTerminology", "workdocs:DescribeComments",
-        "workdocs:DescribeDocumentVersions",
+        "workdocs:DescribeDocumentVersions", "cognito-idp:DescribeUserImportJob", "cognito-idp:ListUserImportJobs",
+        "ses:GetAddressListImportJob", "ses:ListAddressListImportJobs", "ses:GetExportJob",
+        "cognito-sync:QueryRecords", "bedrock-mantle:GetInference", "ec2messages:GetMessages",
     ]],
     # Reviewed in read-only-access-review.tsv, second round.
     *[(action, ANY, (), *both(DENY)) for action in [
@@ -317,7 +320,7 @@ CHECKS = [
         "connect:ListContactReferences", "ec2:DescribeIpamExternalResourceVerificationTokens",
         "ec2:DescribeVerifiedAccessTrustProviders", "grafana:DescribeWorkspace", "grafana:ListWorkspaces",
         "kms:GetParametersForImport", "lightsail:GetRelationalDatabase", "lightsail:GetRelationalDatabases",
-        "medialive:DescribeInputDeviceThumbnail", "rds:DescribeTenantDatabases",
+        "medialive:DescribeInputDeviceThumbnail", "rds:DescribeTenantDatabases", "dms:DescribeEndpoints",
         "ds:DescribeDirectories",
     ]],
     # Content like logs, readable with true only: whatever was pasted into a Support case, and command output.

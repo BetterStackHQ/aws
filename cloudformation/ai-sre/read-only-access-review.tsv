@@ -694,7 +694,7 @@ bedrock-mantle:GetAccountDataRetention	allowed
 bedrock-mantle:GetCustomizedModel	allowed
 bedrock-mantle:GetFile	allowed
 bedrock-mantle:GetFineTuningJob	allowed
-bedrock-mantle:GetInference	allowed
+bedrock-mantle:GetInference	denied	no published response shape yet
 bedrock-mantle:GetModel	allowed
 bedrock-mantle:GetProject	allowed
 bedrock-mantle:GetReservation	allowed
@@ -1580,7 +1580,7 @@ cognito-idp:DescribeResourceServer	allowed
 cognito-idp:DescribeRiskConfiguration	allowed
 cognito-idp:DescribeTerms	allowed
 cognito-idp:DescribeTermsByClient	allowed
-cognito-idp:DescribeUserImportJob	allowed
+cognito-idp:DescribeUserImportJob	denied	pre-signed upload URL
 cognito-idp:DescribeUserPool	allowed
 cognito-idp:DescribeUserPoolClient	denied
 cognito-idp:DescribeUserPoolDomain	allowed
@@ -1607,7 +1607,7 @@ cognito-idp:ListResourceServers	allowed
 cognito-idp:ListResourcesForWebACL	allowed
 cognito-idp:ListTagsForResource	allowed
 cognito-idp:ListTerms	allowed
-cognito-idp:ListUserImportJobs	allowed
+cognito-idp:ListUserImportJobs	denied	pre-signed upload URL
 cognito-idp:ListUserPoolClients	allowed
 cognito-idp:ListUserPoolClientSecrets	denied
 cognito-idp:ListUserPoolReplicas	allowed
@@ -1624,7 +1624,7 @@ cognito-sync:GetIdentityPoolConfiguration	allowed
 cognito-sync:ListDatasets	allowed
 cognito-sync:ListIdentityPoolUsage	allowed
 cognito-sync:ListRecords	denied
-cognito-sync:QueryRecords	allowed
+cognito-sync:QueryRecords	denied	no published response shape yet
 comprehend:BatchDetectDominantLanguage	allowed
 comprehend:BatchDetectEntities	allowed
 comprehend:BatchDetectKeyPhrases	allowed
@@ -2206,7 +2206,7 @@ dms:DescribeCertificates	allowed
 dms:DescribeConnections	allowed
 dms:DescribeConversionConfiguration	allowed
 dms:DescribeDataMigrations	allowed
-dms:DescribeEndpoints	allowed
+dms:DescribeEndpoints	denied	endpoint passwords
 dms:DescribeEndpointSettings	allowed
 dms:DescribeEndpointTypes	allowed
 dms:DescribeEngineVersions	allowed
@@ -2627,7 +2627,7 @@ ec2:SearchLocalGatewayRoutes	allowed
 ec2:SearchTransitGatewayMulticastGroups	allowed
 ec2:SearchTransitGatewayRoutes	allowed
 ec2messages:GetEndpoint	allowed
-ec2messages:GetMessages	allowed
+ec2messages:GetMessages	denied	no published response shape yet
 ecr-public:BatchCheckLayerAvailability	allowed
 ecr-public:DescribeImages	allowed
 ecr-public:DescribeImageTags	allowed
@@ -2941,7 +2941,7 @@ events:DescribeEventSource	allowed
 events:DescribePartnerEventSource	allowed
 events:DescribeReplay	allowed
 events:DescribeRule	allowed
-events:DescribeSubscriber	allowed
+events:DescribeSubscriber	configuration-value
 events:ListApiDestinations	allowed
 events:ListArchives	allowed
 events:ListConnections	allowed
@@ -6152,7 +6152,7 @@ ses:GetAccountSendingEnabled	allowed
 ses:GetAddonInstance	allowed
 ses:GetAddonSubscription	allowed
 ses:GetAddressList	allowed
-ses:GetAddressListImportJob	allowed
+ses:GetAddressListImportJob	denied	pre-signed upload URL
 ses:GetArchive	allowed
 ses:GetArchiveExport	allowed
 ses:GetArchiveMessage	denied
@@ -6176,7 +6176,7 @@ ses:GetEmailAddressInsights	allowed
 ses:GetEmailIdentity	allowed
 ses:GetEmailIdentityPolicies	allowed
 ses:GetEmailTemplate	allowed
-ses:GetExportJob	allowed
+ses:GetExportJob	denied	pre-signed URL to exported recipients and subjects
 ses:GetIdentityDkimAttributes	allowed
 ses:GetIdentityMailFromDomainAttributes	allowed
 ses:GetIdentityNotificationAttributes	allowed
@@ -6198,7 +6198,7 @@ ses:GetTenant	allowed
 ses:GetTrafficPolicy	allowed
 ses:ListAddonInstances	allowed
 ses:ListAddonSubscriptions	allowed
-ses:ListAddressListImportJobs	allowed
+ses:ListAddressListImportJobs	denied	pre-signed upload URL
 ses:ListAddressLists	allowed
 ses:ListArchiveExports	allowed
 ses:ListArchives	allowed

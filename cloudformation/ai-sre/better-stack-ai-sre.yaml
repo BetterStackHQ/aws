@@ -391,6 +391,8 @@ Resources:
                     - cloudformation:ListResourceRequests
                     - eks:DescribeAddon
                     - events:ListTargetsByRule
+                    # EventBridge subscribers carry the same target inputs and HTTP header values.
+                    - events:DescribeSubscriber
                     - firehose:DescribeDeliveryStream
                   Resource: '*'
                 - Sid: DenyStageVariables
@@ -522,7 +524,8 @@ Resources:
               - lightsail:GetRelationalDatabase
               - lightsail:GetRelationalDatabases
               - rds:DescribeTenantDatabases
-              # The Directory Service RADIUS shared secret.
+              # DMS endpoint passwords and the Directory Service RADIUS shared secret.
+              - dms:DescribeEndpoints
               - ds:DescribeDirectories
               # Identity provider client secrets.
               - cognito-idp:DescribeIdentityProvider
@@ -551,6 +554,11 @@ Resources:
               - mobiletargeting:GetGcmChannel
               - sns:GetEndpointAttributes
               - sns:ListEndpointsByPlatformApplication
+              # Pre-signed URLs to upload into a pending import job.
+              - cognito-idp:DescribeUserImportJob
+              - cognito-idp:ListUserImportJobs
+              - ses:GetAddressListImportJob
+              - ses:ListAddressListImportJobs
               # Carry pre-shared or BGP keys, like ec2:DescribeVpnConnections above.
               - directconnect:DescribeVirtualInterfaces
               - directconnect:DescribeRouterConfiguration
@@ -704,6 +712,10 @@ Resources:
               - workdocs:DescribeComments
               - workdocs:DescribeDocumentVersions
               - medialive:DescribeInputDeviceThumbnail
+              # AWS publishes no response shape for these yet: stored inference requests, and the SSM Agent's
+              # Run Command channel.
+              - bedrock-mantle:GetInference
+              - ec2messages:GetMessages
               # Payloads of Lambda durable executions.
               - lambda:GetDurableExecution
               - lambda:GetDurableExecutionHistory
@@ -729,6 +741,9 @@ Resources:
               - ses:ListSuppressedDestinations
               - sms-voice:DescribeOptedOutNumbers
               - sns:ListPhoneNumbersOptedOut
+              # A pre-signed URL to an export of sent messages' recipients and subjects.
+              - ses:GetExportJob
+              - cognito-sync:QueryRecords
               # Code, as lambda:GetFunction above.
               - cloudfront:GetFunction
               - cloudfront:GetConnectionFunction

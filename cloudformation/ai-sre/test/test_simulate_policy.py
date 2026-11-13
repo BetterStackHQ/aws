@@ -38,7 +38,7 @@ DENIED_IN_EVERY_SETTING = [
     "athena:GetQueryResults", "cassandra:Select", "dax:Query", "qldb:GetBlock", "timestream:Select",
     "glacier:GetJobOutput", "es:ESHttpGet", "kinesisvideo:GetMedia", "healthlake:ReadResource",
     "cognito-idp:AdminGetUser", "cognito-idp:ListUsers", "lambda:GetLayerVersion", "ecr:BatchGetImage",
-    "codecommit:GetFile", "codeartifact:GetPackageVersionAsset", "ds:DescribeDirectories",
+    "codecommit:GetFile", "codeartifact:GetPackageVersionAsset", "dms:DescribeEndpoints", "ds:DescribeDirectories",
 ]
 DENIED_API_GATEWAY_PATHS = ["/apikeys", "/apikeys/key123", "/usageplans/plan123/keys", "/usageplans/plan123/keys/key123"]
 DENIED_WITHOUT_CONFIGURATION_VALUES = [
@@ -47,7 +47,7 @@ DENIED_WITHOUT_CONFIGURATION_VALUES = [
     "ec2:DescribeInstanceAttribute", "ec2:DescribeLaunchTemplateVersions", "ec2:DescribeSpotFleetRequests",
     "ec2:DescribeSpotInstanceRequests", "cloudformation:DescribeEvents",
     "autoscaling:DescribeLaunchConfigurations", "cloudformation:DescribeStacks", "cloudformation:DescribeChangeSet",
-    "cloudformation:DescribeStackEvents", "cloudformation:ListExports", "events:ListTargetsByRule",
+    "cloudformation:DescribeStackEvents", "cloudformation:ListExports", "events:ListTargetsByRule", "events:DescribeSubscriber",
     "firehose:DescribeDeliveryStream", "cloudformation:DescribeStackResourceDrifts",
     "cloudformation:ListStackInstanceResourceDrifts", "cloudformation:DescribeStackSet",
     "cloudformation:DescribeStackInstance", "eks:DescribeAddon",
