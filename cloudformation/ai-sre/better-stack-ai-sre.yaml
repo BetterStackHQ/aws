@@ -385,8 +385,10 @@ Resources:
                     - cloudformation:ListStackInstanceResourceDrifts
                     - cloudformation:DescribeStackSet
                     - cloudformation:DescribeStackInstance
-                    # Cloud Control lists every resource of a type with its full properties.
+                    # Cloud Control lists every resource of a type with its full properties, and resource requests
+                    # carry the properties they set.
                     - cloudformation:ListResources
+                    - cloudformation:ListResourceRequests
                     - eks:DescribeAddon
                     - events:ListTargetsByRule
                     - firehose:DescribeDeliveryStream
@@ -503,6 +505,14 @@ Resources:
               - cloudhsm:DescribeClusters
               - opsworks:DescribeApps
               - iotwireless:GetWirelessDevice
+              - ec2:DescribeIpamExternalResourceVerificationTokens
+              - ec2:DescribeVerifiedAccessTrustProviders
+              - grafana:DescribeWorkspace
+              - grafana:ListWorkspaces
+              - kms:GetParametersForImport
+              - lightsail:GetRelationalDatabase
+              - lightsail:GetRelationalDatabases
+              - rds:DescribeTenantDatabases
               # Identity provider client secrets.
               - cognito-idp:DescribeIdentityProvider
               - cognito-idp:GetIdentityProviderByIdentifier
@@ -682,13 +692,11 @@ Resources:
               - translate:GetTerminology
               - workdocs:DescribeComments
               - workdocs:DescribeDocumentVersions
-              # Inputs, outputs and payloads of workflow runs.
+              - medialive:DescribeInputDeviceThumbnail
+              # Payloads of Lambda durable executions.
               - lambda:GetDurableExecution
               - lambda:GetDurableExecutionHistory
               - lambda:GetDurableExecutionState
-              - states:DescribeExecution
-              - states:GetExecutionHistory
-              - swf:GetWorkflowExecutionHistory
               # End users of the customer's product.
               - cognito-idp:AdminGet*
               - cognito-idp:AdminList*
@@ -699,6 +707,7 @@ Resources:
               - connect:ListDataTableValues
               - connect:ListRealtimeContactAnalysisSegments
               - connect:ListRealtimeContactAnalysisSegmentsV2
+              - connect:ListContactReferences
               - lex:GetSession
               - lex:GetUtterancesView
               - mobiletargeting:GetEndpoint
@@ -714,6 +723,9 @@ Resources:
               - cloudfront:GetConnectionFunction
               - codecommit:DescribeMergeConflicts
               - codecommit:GetBlobDifferences
+              - codecommit:GetComment
+              - codecommit:GetCommentsForComparedCommit
+              - codecommit:GetCommentsForPullRequest
               - greengrass:GetComponentVersionArtifact
               - inspector2:BatchGetCodeSnippet
               - tnb:GetSolFunctionPackageContent

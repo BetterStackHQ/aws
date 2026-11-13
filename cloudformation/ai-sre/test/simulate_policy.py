@@ -252,6 +252,12 @@ CHECKS = [
     ("cloudformation:DescribeStackSet", ANY, (), *CONFIG),
     ("cloudformation:DescribeStackInstance", ANY, (), *CONFIG),
     ("cloudformation:ListResources", ANY, (), *CONFIG),
+    ("cloudformation:ListResourceRequests", ANY, (), *CONFIG),
+    # Execution input and output and resource request status: readable with true, not granted with false.
+    ("states:DescribeExecution", ANY, (), *BROAD),
+    ("states:GetExecutionHistory", ANY, (), *BROAD),
+    ("swf:GetWorkflowExecutionHistory", ANY, (), *BROAD),
+    ("cloudformation:GetResourceRequestStatus", ANY, (), *BROAD),
     ("eks:DescribeAddon", ANY, (), *CONFIG),
     ("events:ListTargetsByRule", ANY, (), *CONFIG),
     ("firehose:DescribeDeliveryStream", ANY, (), *CONFIG),
@@ -299,11 +305,18 @@ CHECKS = [
         "s3-outposts:GetObjectVersionForReplication", "securityagent:GetArtifact", "ses:GetArchiveMessage",
         "ses:GetArchiveMessageContent", "ses:GetArchiveSearchResults", "ses:GetContact", "ses:ListContacts",
         "ses:ListMembersOfAddressList", "ses:ListSuppressedDestinations", "sms-voice:DescribeOptedOutNumbers",
-        "sns:ListPhoneNumbersOptedOut", "states:DescribeExecution", "states:GetExecutionHistory",
-        "support:DescribeAttachment", "swf:GetWorkflowExecutionHistory", "tax:GetTaxRegistrationDocument",
+        "sns:ListPhoneNumbersOptedOut", "support:DescribeAttachment", "tax:GetTaxRegistrationDocument",
         "tnb:GetSolFunctionPackageContent", "transcribe:GetCallAnalyticsJob", "transcribe:GetTranscriptionJob",
         "translate:GetParallelData", "translate:GetTerminology", "workdocs:DescribeComments",
         "workdocs:DescribeDocumentVersions",
+    ]],
+    # Reviewed in read-only-access-review.tsv, second round.
+    *[(action, ANY, (), *both(DENY)) for action in [
+        "codecommit:GetComment", "codecommit:GetCommentsForComparedCommit", "codecommit:GetCommentsForPullRequest",
+        "connect:ListContactReferences", "ec2:DescribeIpamExternalResourceVerificationTokens",
+        "ec2:DescribeVerifiedAccessTrustProviders", "grafana:DescribeWorkspace", "grafana:ListWorkspaces",
+        "kms:GetParametersForImport", "lightsail:GetRelationalDatabase", "lightsail:GetRelationalDatabases",
+        "medialive:DescribeInputDeviceThumbnail", "rds:DescribeTenantDatabases",
     ]],
     # With true: a sample read in each service family only ReadOnlyAccess grants, and the reads it lacks that
     # BetterStackAiSreBroadAccess adds. With false: none of them.
