@@ -3361,6 +3361,7 @@ guardduty:ListCustomDetectionRules	allowed
 guardduty:ListDetectors	allowed
 guardduty:ListFilters	allowed
 guardduty:ListFindings	allowed
+guardduty:ListInvestigationRecords	allowed
 guardduty:ListInvestigations	allowed
 guardduty:ListInvitations	allowed
 guardduty:ListIPSets	allowed
@@ -6005,6 +6006,7 @@ securityhub:GetConnector	allowed
 securityhub:GetConnectorV2	allowed
 securityhub:GetControlFindingSummary	allowed
 securityhub:GetCoverageStatisticsV2	allowed
+securityhub:GetCSPMOrganizationsImportStatus	denied	no published response shape yet
 securityhub:GetEnabledStandards	allowed
 securityhub:GetExportJobV2	allowed
 securityhub:GetFindingAggregator	allowed

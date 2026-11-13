@@ -413,6 +413,13 @@ Resources:
   # Named like the role, from the external ID. Never change these names: an update would replace the policies.
   AiSreDenyDataPolicy:
     Type: AWS::IAM::ManagedPolicy
+    # cfn-lint 1.60 doesn't know securityhub:GetCSPMOrganizationsImportStatus yet (W3037). Every action name here is
+    # still checked against AWS's service reference by the ReadOnlyAccess drift workflow.
+    Metadata:
+      cfn-lint:
+        config:
+          ignore_checks:
+            - W3037
     Properties:
       ManagedPolicyName: !Join ['', ['better-stack-ai-sre-deny-data-', !Select [3, !Split ['-', !Ref ExternalId]]]]
       Description: Better Stack AI SRE - denies secrets, credentials and data reads to the AI SRE role
@@ -446,6 +453,8 @@ Resources:
               - cloudwatch:GetTelemetryQueryResults
               # Under xray:Get*, but reports sampling statistics and changes how X-Ray allocates the sampling quota.
               - xray:GetSamplingTargets
+              # AWS publishes no response shape for it yet, so it is denied until AWS does.
+              - securityhub:GetCSPMOrganizationsImportStatus
             Resource: '*'
           # Objects stay unreadable, except the logs AWS services deliver under an AWSLogs/ key (load balancer
           # access logs, VPC Flow Logs, CloudTrail). Access point and Object Lambda ARNs never match, so they stay denied.

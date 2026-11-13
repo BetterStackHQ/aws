@@ -152,7 +152,6 @@ CHECKS = [
     ("s3:GetObject", "arn:aws:s3:::b/data/x", (), *both(DENY)),
     ("s3:GetObject", "arn:aws:s3:::b/AWSLogs", (), *both(DENY)),
     ("s3:GetObject", ACCESS_POINT_LOG_OBJECT, (), *both(DENY)),
-    ("s3:GetObject", OBJECT_LAMBDA_LOG_OBJECT, (), *both(DENY)),
     ("s3-object-lambda:GetObject", OBJECT_LAMBDA_LOG_OBJECT, (), *both(DENY)),
     ("s3:ListBucket", "arn:aws:s3:::b", (), *BROAD),
     ("secretsmanager:GetSecretValue", ANY, (), *both(DENY)),
@@ -181,6 +180,8 @@ CHECKS = [
     ("cloudwatch:GetSpaceDataAccess", ANY, (), *both(DENY)),
     ("cloudwatch:GetTelemetryQueryResults", ANY, (), *both(DENY)),
     ("xray:GetSamplingTargets", ANY, (), *both(DENY)),
+    ("securityhub:GetCSPMOrganizationsImportStatus", ANY, (), *both(DENY)),
+    ("guardduty:ListInvestigationRecords", ANY, (), *BROAD),
     # Credentials and tokens other services hand out.
     *[(action, ANY, (), *both(DENY)) for action in [
         "ecr:GetAuthorizationToken", "ecr-public:GetAuthorizationToken", "codeartifact:GetAuthorizationToken",

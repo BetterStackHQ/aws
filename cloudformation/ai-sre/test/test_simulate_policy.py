@@ -194,8 +194,10 @@ class SimulatePolicyTest(unittest.TestCase):
     def test_s3_objects_are_readable_under_aws_logs_only_and_only_with_true(self):
         self.assertEqual(expected("s3:GetObject", "arn:aws:s3:::b/AWSLogs/1/x"), [sim.BROAD])
         self.assertEqual(expected("s3:GetObject", "arn:aws:s3:::b/p/AWSLogs/1/x"), [sim.BROAD])
-        for resource in ("arn:aws:s3:::b/data/x", sim.ANY, sim.ACCESS_POINT_LOG_OBJECT, sim.OBJECT_LAMBDA_LOG_OBJECT):
+        for resource in ("arn:aws:s3:::b/data/x", sim.ANY, sim.ACCESS_POINT_LOG_OBJECT):
             self.assertEqual(expected("s3:GetObject", resource), [(sim.DENY, sim.DENY)], resource)
+        # Reads through S3 Object Lambda are authorized as s3-object-lambda:GetObject, not s3:GetObject.
+        self.assertEqual(expected("s3-object-lambda:GetObject", sim.OBJECT_LAMBDA_LOG_OBJECT), [(sim.DENY, sim.DENY)])
         self.assertEqual(expected("s3:ListBucket", "arn:aws:s3:::b"), [sim.BROAD])
 
     def test_kms_decrypt_through_each_named_service_with_true_only(self):
