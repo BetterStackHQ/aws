@@ -268,13 +268,21 @@ Resources:
             Principal:
               Service: lambda.amazonaws.com
             Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
       Policies:
         - PolicyName: ResourceTaggingPermissions
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
+              # Write into the log groups the stack creates, never create one: a Lambda invoked while the stack
+              # is being deleted would otherwise recreate its log group and block the next deployment.
+              - Sid: OwnLogGroups
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub 'arn:aws:logs:*:${AWS::AccountId}:log-group:/aws/lambda/better-stack-logs:*'
+                  - !Sub 'arn:aws:logs:*:${AWS::AccountId}:log-group:/aws/lambda/better-stack-metrics:*'
               - Sid: TagAccess
                 Effect: Allow
                 Action:
@@ -319,13 +327,20 @@ Resources:
             Principal:
               Service: lambda.amazonaws.com
             Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
       Policies:
         - PolicyName: BucketManagementPermissions
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
+              # Write into the log groups the stack creates, never create one: a Lambda invoked while the stack
+              # is being deleted would otherwise recreate its log group and block the next deployment.
+              - Sid: OwnLogGroups
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub 'arn:aws:logs:*:${AWS::AccountId}:log-group:/aws/lambda/better-stack-bucket-manager:*'
               - Sid: BucketManagement
                 Effect: Allow
                 Action:
