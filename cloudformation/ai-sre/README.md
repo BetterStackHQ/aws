@@ -83,7 +83,7 @@ Some reads cost money: Logs Insights and CloudTrail Lake queries are charged per
 
 ### What the role can't read
 
-These are the reads known to return secrets, credentials, stored data or configuration values that teams keep secrets in. They're denied explicitly, in both scopes, so that `ReadOnlyAccess` or a broader policy attached to the role later can't widen it:
+Each read below is known to return secrets, credentials, stored data or configuration values that teams keep secrets in. They're denied explicitly, in both scopes, so that `ReadOnlyAccess` or a broader policy attached to the role later can't widen it:
 
 - Where teams keep secrets in configuration: Lambda environment variables (`lambda:GetFunctionConfiguration`, `ListFunctions`, `ListVersionsByFunction`, `ListMicrovmImageVersions`), ECS task definitions and task overrides (`ecs:DescribeTaskDefinition`, `DescribeTasks`, `DescribeExpressGatewayService`, `DescribeDaemonTaskDefinition`), EC2 and Auto Scaling user data (`ec2:DescribeInstanceAttribute`, `DescribeLaunchTemplateVersions`, `DescribeSpotFleetRequests`, `autoscaling:DescribeLaunchConfigurations`), Batch job definitions and jobs (`batch:DescribeJobDefinitions`, `DescribeJobs`, `DescribeServiceJob`), and CloudFormation stack, change set and stack set parameters and resource `Metadata` (`cloudformation:DescribeStacks`, `DescribeChangeSet`, `DescribeStackSet`, `DescribeStackInstance`, `DescribeStackResource`)
 - The reads that copy those values: Lambda MicroVM image versions and web function revisions (`lambda:GetMicrovmImageVersion`, `GetWebFunctionRevision`), launch template data and Spot requests (`ec2:GetLaunchTemplateData`, `DescribeSpotInstanceRequests`), stack templates and extension configurations (`cloudformation:GetTemplate`, `BatchDescribeTypeConfigurations`), stack events and drift results (`cloudformation:DescribeStackEvents`, `DescribeEvents`, `DescribeStackResourceDrifts`, `DetectStackResourceDrift`, `ListStackInstanceResourceDrifts`), Cloud Control resources and resource requests (`cloudformation:GetResource`, `ListResources`, `GetGeneratedTemplate`, `ListResourceRequests`, `GetResourceRequestStatus`), and AWS Config's recorded configuration items (`config:BatchGetResourceConfig`, `BatchGetAggregateResourceConfig`, `GetResourceConfigHistory`, `GetAggregateResourceConfig`, `SelectResourceConfig`, `SelectAggregateResourceConfig`, `GetResourceEvaluationSummary`)
@@ -124,7 +124,7 @@ With `ReadScope=curated`, the role can't read either.
 
 ### Configuration values
 
-Read-only isn't secret-free. With `ReadScope=broad`, these configuration values are readable, because they're often where a misconfiguration shows: stack exports, EventBridge target and subscriber inputs, API Gateway stage variables, Firehose destination settings (for a Splunk destination that includes the HEC token, unless the stream reads it from Secrets Manager), EKS add-on configuration values, and, through `ReadOnlyAccess`, other services' environment settings and configuration: CodeBuild, App Runner, Amplify and Elastic Beanstalk environment settings, Systems Manager documents and AppConfig configurations. A team can keep a secret in any of these. `ReadOnlyAccess` can still expose such values through other services as well. These are the ones found so far:
+Read-only isn't secret-free. With `ReadScope=broad`, these configuration values are readable, because they're often where a misconfiguration shows: stack exports, EventBridge target and subscriber inputs, API Gateway stage variables, Firehose destination settings (for a Splunk destination that includes the HEC token, unless the stream reads it from Secrets Manager), EKS add-on configuration values, and, through `ReadOnlyAccess`, other services' environment settings and configuration: CodeBuild, App Runner, Amplify and Elastic Beanstalk environment settings, Systems Manager documents and AppConfig configurations. A team can keep a secret in any of these. `ReadOnlyAccess` can still expose such values through other services as well. Those found so far include:
 
 - Stack parameters that other services pass to CloudFormation: CodePipeline's CloudFormation deploy actions (`codepipeline:GetPipeline`, `ParameterOverrides`), Service Catalog provisioned product plans (`servicecatalog:DescribeProvisionedProductPlan`) and SageMaker projects (`sagemaker:DescribeProject`)
 - EC2 user data in Image Builder image recipes (`imagebuilder:GetImageRecipe`, `userDataOverride`)
@@ -136,6 +136,10 @@ Read-only isn't secret-free. With `ReadScope=broad`, these configuration values 
 - Step Functions and SWF execution input and output (`states:DescribeExecution`, `states:GetExecutionHistory`, `swf:GetWorkflowExecutionHistory`)
 - IoT command payloads (`iot:GetCommand`)
 - CloudWatch telemetry pipeline configurations (`observabilityadmin:GetTelemetryPipeline`)
+- Lightsail container services' environment variables (`lightsail:GetContainerServices`, `GetContainerServiceDeployments`)
+- CodeBuild builds' environment variables (`codebuild:BatchGetBuilds`)
+- SageMaker training jobs', models' and processing jobs' environment variables (`sagemaker:DescribeTrainingJob`, `DescribeModel`, `DescribeProcessingJob`)
+- EMR Serverless job runs' arguments and configuration (`emr-serverless:GetJobRun`)
 
 With `ReadScope=curated`, the role has no `ReadOnlyAccess` at all, and each of these reads is either denied or not granted. The ones the role's fixed list would otherwise grant are denied explicitly:
 

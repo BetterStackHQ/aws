@@ -74,9 +74,9 @@ Parameters:
       curated: a fixed list of reads Better Stack maintains. broad: AWS's ReadOnlyAccess as well, which AWS extends as
       it adds services. Both deny the reads the README lists as known to return secrets, credentials, stored data,
       environment variables, user data, job definitions or stack parameters. With broad, ReadOnlyAccess can still
-      expose such values through other services; those found so far are CodeBuild, App Runner, Amplify, Elastic
-      Beanstalk, Glue, CodePipeline, Service Catalog, SageMaker, Image Builder and CloudTrail Lake. In both, CloudTrail
-      event history keeps the request parameters of calls such as CreateStack.
+      expose such values through other services; those found so far, listed in the README, include CodeBuild, App
+      Runner, Amplify, Elastic Beanstalk, Glue, CodePipeline, Service Catalog, SageMaker, Image Builder and CloudTrail
+      Lake. In both, CloudTrail event history keeps the request parameters of calls such as CreateStack.
     Default: curated
     AllowedValues:
       - curated
