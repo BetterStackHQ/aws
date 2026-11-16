@@ -151,6 +151,11 @@ CHECKS = [
     ("s3:GetObject", "arn:aws:s3:::b/AWSLogs/1/x", (), *BROAD),
     ("s3:GetObject", "arn:aws:s3:::b/p/AWSLogs/1/x", (), *BROAD),
     ("s3:GetObjectVersion", "arn:aws:s3:::b/AWSLogs/1/x", (), *BROAD),
+    ("s3:GetObject", "arn:aws:s3:::b/AWSLogs/1/CloudTrail/us-east-1/x", (), *BROAD),
+    # AWS Config's history and snapshot files under AWSLogs/ copy the configuration items denied above.
+    ("s3:GetObject", "arn:aws:s3:::b/AWSLogs/1/Config/us-east-1/2026/1/1/ConfigHistory/x.json.gz", (), *both(DENY)),
+    ("s3:GetObject", "arn:aws:s3:::b/p/AWSLogs/1/Config/us-east-1/2026/1/1/ConfigSnapshot/x.json.gz", (), *both(DENY)),
+    ("s3:GetObjectVersion", "arn:aws:s3:::b/AWSLogs/1/Config/us-east-1/x", (), *both(DENY)),
     ("s3:GetObject", "arn:aws:s3:::b/data/x", (), *both(DENY)),
     ("s3:GetObject", "arn:aws:s3:::b/AWSLogs", (), *both(DENY)),
     ("s3:GetObject", ACCESS_POINT_LOG_OBJECT, (), *both(DENY)),

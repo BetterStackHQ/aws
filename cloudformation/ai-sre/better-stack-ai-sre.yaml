@@ -72,9 +72,12 @@ Parameters:
     Type: String
     Description: >-
       curated: a fixed list of reads Better Stack maintains. broad: AWS's ReadOnlyAccess as well, which AWS extends as
-      it adds services. Both deny secrets, credentials, stored data, Lambda and ECS environment variables, EC2 user
-      data, Batch job definitions and stack parameters. With broad, other services' environment settings (such as
-      CodeBuild, App Runner, Amplify, Elastic Beanstalk and Glue) stay readable.
+      it adds services. Both deny secrets, credentials and stored data, and the Lambda, ECS, EC2, Auto Scaling, Batch,
+      CloudFormation and AWS Config reads that return environment variables, user data, job definitions or stack
+      parameters. With broad, other services' configuration stays readable and can carry the same values, such as
+      CodeBuild, App Runner, Amplify, Elastic Beanstalk, Glue, CodePipeline, Service Catalog, SageMaker and Image
+      Builder, and so does a CloudTrail Lake event data store of AWS Config items. In both, CloudTrail event history
+      keeps the request parameters of calls such as CreateStack.
     Default: curated
     AllowedValues:
       - curated
@@ -495,6 +498,13 @@ Resources:
             Action:
               - s3:GetObject*
             NotResource: !Sub 'arn:${AWS::Partition}:s3:::*/AWSLogs/*'
+          # AWS Config delivers its configuration history and snapshots under AWSLogs/<account>/Config/: the same
+          # configuration items as the Config reads above, so they stay unreadable too.
+          - Sid: DenyS3AwsConfigDeliveries
+            Effect: Deny
+            Action:
+              - s3:GetObject*
+            Resource: !Sub 'arn:${AWS::Partition}:s3:::*/AWSLogs/*/Config/*'
           - Sid: DenyCredentials
             Effect: Deny
             Action:

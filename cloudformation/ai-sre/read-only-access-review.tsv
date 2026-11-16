@@ -5643,22 +5643,22 @@ s3:GetMultiRegionAccessPoint	allowed
 s3:GetMultiRegionAccessPointPolicy	allowed
 s3:GetMultiRegionAccessPointPolicyStatus	allowed
 s3:GetMultiRegionAccessPointRoutes	allowed
-s3:GetObject	denied	except objects under an AWSLogs/ key
-s3:GetObjectAcl	denied	except objects under an AWSLogs/ key
-s3:GetObjectAnnotation	denied	except objects under an AWSLogs/ key
-s3:GetObjectAttributes	denied	except objects under an AWSLogs/ key
-s3:GetObjectLegalHold	denied	except objects under an AWSLogs/ key
-s3:GetObjectRetention	denied	except objects under an AWSLogs/ key
-s3:GetObjectTagging	denied	except objects under an AWSLogs/ key
-s3:GetObjectTorrent	denied	except objects under an AWSLogs/ key
-s3:GetObjectVersion	denied	except objects under an AWSLogs/ key
-s3:GetObjectVersionAcl	denied	except objects under an AWSLogs/ key
-s3:GetObjectVersionAnnotation	denied	except objects under an AWSLogs/ key
-s3:GetObjectVersionAnnotationForReplication	denied	except objects under an AWSLogs/ key
-s3:GetObjectVersionAttributes	denied	except objects under an AWSLogs/ key
-s3:GetObjectVersionForReplication	denied	except objects under an AWSLogs/ key
-s3:GetObjectVersionTagging	denied	except objects under an AWSLogs/ key
-s3:GetObjectVersionTorrent	denied	except objects under an AWSLogs/ key
+s3:GetObject	denied	except objects under an AWSLogs/ key, other than AWS Config deliveries under AWSLogs/*/Config/
+s3:GetObjectAcl	denied	except objects under an AWSLogs/ key, other than AWS Config deliveries under AWSLogs/*/Config/
+s3:GetObjectAnnotation	denied	except objects under an AWSLogs/ key, other than AWS Config deliveries under AWSLogs/*/Config/
+s3:GetObjectAttributes	denied	except objects under an AWSLogs/ key, other than AWS Config deliveries under AWSLogs/*/Config/
+s3:GetObjectLegalHold	denied	except objects under an AWSLogs/ key, other than AWS Config deliveries under AWSLogs/*/Config/
+s3:GetObjectRetention	denied	except objects under an AWSLogs/ key, other than AWS Config deliveries under AWSLogs/*/Config/
+s3:GetObjectTagging	denied	except objects under an AWSLogs/ key, other than AWS Config deliveries under AWSLogs/*/Config/
+s3:GetObjectTorrent	denied	except objects under an AWSLogs/ key, other than AWS Config deliveries under AWSLogs/*/Config/
+s3:GetObjectVersion	denied	except objects under an AWSLogs/ key, other than AWS Config deliveries under AWSLogs/*/Config/
+s3:GetObjectVersionAcl	denied	except objects under an AWSLogs/ key, other than AWS Config deliveries under AWSLogs/*/Config/
+s3:GetObjectVersionAnnotation	denied	except objects under an AWSLogs/ key, other than AWS Config deliveries under AWSLogs/*/Config/
+s3:GetObjectVersionAnnotationForReplication	denied	except objects under an AWSLogs/ key, other than AWS Config deliveries under AWSLogs/*/Config/
+s3:GetObjectVersionAttributes	denied	except objects under an AWSLogs/ key, other than AWS Config deliveries under AWSLogs/*/Config/
+s3:GetObjectVersionForReplication	denied	except objects under an AWSLogs/ key, other than AWS Config deliveries under AWSLogs/*/Config/
+s3:GetObjectVersionTagging	denied	except objects under an AWSLogs/ key, other than AWS Config deliveries under AWSLogs/*/Config/
+s3:GetObjectVersionTorrent	denied	except objects under an AWSLogs/ key, other than AWS Config deliveries under AWSLogs/*/Config/
 s3:GetReplicationConfiguration	allowed
 s3:GetStorageLensConfiguration	allowed
 s3:GetStorageLensConfigurationTagging	allowed

@@ -203,11 +203,20 @@ class SimulatePolicyTest(unittest.TestCase):
     def test_s3_objects_are_readable_under_aws_logs_only_and_only_with_broad(self):
         self.assertEqual(expected("s3:GetObject", "arn:aws:s3:::b/AWSLogs/1/x"), [sim.BROAD])
         self.assertEqual(expected("s3:GetObject", "arn:aws:s3:::b/p/AWSLogs/1/x"), [sim.BROAD])
+        self.assertEqual(expected("s3:GetObject", "arn:aws:s3:::b/AWSLogs/1/CloudTrail/us-east-1/x"), [sim.BROAD])
         for resource in ("arn:aws:s3:::b/data/x", sim.ANY, sim.ACCESS_POINT_LOG_OBJECT):
             self.assertEqual(expected("s3:GetObject", resource), [(sim.DENY, sim.DENY)], resource)
         # Reads through S3 Object Lambda are authorized as s3-object-lambda:GetObject, not s3:GetObject.
         self.assertEqual(expected("s3-object-lambda:GetObject", sim.OBJECT_LAMBDA_LOG_OBJECT), [(sim.DENY, sim.DENY)])
         self.assertEqual(expected("s3:ListBucket", "arn:aws:s3:::b"), [sim.BROAD])
+
+    def test_aws_config_deliveries_under_aws_logs_are_denied_in_both_scopes(self):
+        for resource in (
+            "arn:aws:s3:::b/AWSLogs/1/Config/us-east-1/2026/1/1/ConfigHistory/x.json.gz",
+            "arn:aws:s3:::b/p/AWSLogs/1/Config/us-east-1/2026/1/1/ConfigSnapshot/x.json.gz",
+        ):
+            self.assertEqual(expected("s3:GetObject", resource), [(sim.DENY, sim.DENY)], resource)
+        self.assertEqual(expected("s3:GetObjectVersion", "arn:aws:s3:::b/AWSLogs/1/Config/us-east-1/x"), [(sim.DENY, sim.DENY)])
 
     def test_kms_decrypt_through_each_named_service_with_broad_only(self):
         for service in sim.KMS_BROAD_SERVICES:
