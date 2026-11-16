@@ -28,7 +28,7 @@ One IAM role, `better-stack-ai-sre-role-<8 hex>`, where `<8 hex>` is the first e
 
 Only Better Stack's AI SRE callers for the chosen environment can assume the role, and only with the external ID Better Stack generated for your integration. A second trust statement lets the same callers set a source identity that starts with `bs-`, so that your CloudTrail can attribute AI SRE's calls; it grants no access by itself.
 
-The stack also creates two customer managed policies, `better-stack-ai-sre-deny-data-<8 hex>` and `better-stack-ai-sre-deny-stored-data-<8 hex>`, attached to the role in both settings. They hold the denies listed in [What the role can't read](#what-the-role-cant-read), which don't fit in the role's own inline policies. With `AllowConfigurationValues=true`, the default, the role also has AWS's managed [`ReadOnlyAccess`](https://docs.aws.amazon.com/aws-managed-policy/latest/reference/ReadOnlyAccess.html) policy attached. The stack creates nothing else.
+The stack also creates two customer managed policies, `better-stack-ai-sre-deny-data-<8 hex>` and `better-stack-ai-sre-deny-stored-data-<8 hex>`, attached to the role in both settings. They hold the denies listed in [What the role can't read](#what-the-role-cant-read), which don't fit in the role's own inline policies. With `AllowConfigurationValues=true`, the role also has AWS's managed [`ReadOnlyAccess`](https://docs.aws.amazon.com/aws-managed-policy/latest/reference/ReadOnlyAccess.html) policy attached. The stack creates nothing else.
 
 ## Stack Outputs
 
