@@ -5,12 +5,12 @@ The list has two header lines, `# ReadOnlyAccess <version id>` and `# service re
 line per action: `<prefix>:<ActionName><TAB><verdict>`, with an optional third TAB column holding a short note on
 `denied` and `configuration-value` lines only. The action is spelled as AWS's service reference spells it, the lines
 are sorted by the lowercased action, and none repeats. A verdict is `allowed`, `denied` (a Deny statement of the
-template matches it in both settings) or `configuration-value` (readable in the default setting by design).
+template matches it in both settings) or `configuration-value` (readable with ReadScope=broad by design, denied or not granted with curated).
 
 --static checks the list's format, and that every `denied` line is matched by a Deny statement the role has in both
 settings, unconditional and on every resource. A Deny with a condition or a resource scope (the S3 objects outside
 AWSLogs/, say) counts only for a line whose note says what stays readable. Every `configuration-value` line must be
-denied or not granted with AllowConfigurationValues=false, on the same terms.
+denied or not granted with ReadScope=curated, on the same terms.
 --policy also expands AWS's ReadOnlyAccess (the policy document given, as `iam get-policy-version` returns it) and
 every Allow pattern in the template's inline policies against the service reference, and fails on every action
 that has no line: one AWS added to ReadOnlyAccess, or one an inline wildcard such as cloudwatch:Get* gained since
@@ -104,7 +104,7 @@ def _unconditional(statement):
 
 
 def _restricted_errors(entries, template):
-    """configuration-value lines granted with AllowConfigurationValues=false and not denied there."""
+    """configuration-value lines granted with ReadScope=curated and not denied there."""
     statements = template_policies.role_statements(False, template)
     allows = [s for s in statements if s["Effect"] == "Allow"]
     denies = [s for s in statements if s["Effect"] == "Deny"]
@@ -118,7 +118,7 @@ def _restricted_errors(entries, template):
         if any(_unconditional(s) for s in matching) or (matching and note):
             continue
         errors.append(
-            f"{action} is a configuration value, and AllowConfigurationValues=false grants it without denying it"
+            f"{action} is a configuration value, and ReadScope=curated grants it without denying it"
             + (": only a conditional or resource-scoped Deny matches, and the line has no note" if matching else "")
         )
     return errors

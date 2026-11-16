@@ -177,7 +177,7 @@ def check_stack_policies(template, contract):
                 f"{logical_id}'s ManagedPolicyName changed to {json.dumps(policy.get('Properties', {}).get('ManagedPolicyName'))}, "
                 f"the contract records {json.dumps(name)}: an update would replace the policy"
             )
-        # A plain list item, not inside an Fn::If, so that it is attached whatever AllowConfigurationValues is.
+        # A plain list item, not inside an Fn::If, so that it is attached whatever ReadScope is.
         if {"Ref": logical_id} not in (attached if isinstance(attached, list) else []):
             errors.append(f"{logical_id} is not attached to the role in both settings (a plain !Ref in ManagedPolicyArns)")
     return errors

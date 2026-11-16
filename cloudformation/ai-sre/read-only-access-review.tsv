@@ -497,7 +497,7 @@ autoscaling:DescribeAutoScalingGroups	allowed
 autoscaling:DescribeAutoScalingInstances	allowed
 autoscaling:DescribeAutoScalingNotificationTypes	allowed
 autoscaling:DescribeInstanceRefreshes	allowed
-autoscaling:DescribeLaunchConfigurations	configuration-value
+autoscaling:DescribeLaunchConfigurations	denied	launch configuration user data
 autoscaling:DescribeLifecycleHooks	allowed
 autoscaling:DescribeLifecycleHookTypes	allowed
 autoscaling:DescribeLoadBalancers	allowed
@@ -591,13 +591,13 @@ backup:ListTags	allowed
 backup:ListTieringConfigurations	allowed
 batch:DescribeComputeEnvironments	allowed
 batch:DescribeConsumableResource	allowed
-batch:DescribeJobDefinitions	configuration-value
+batch:DescribeJobDefinitions	denied	container environments
 batch:DescribeJobQueues	allowed
-batch:DescribeJobs	configuration-value
+batch:DescribeJobs	denied	container environments and overrides
 batch:DescribeQuotaShare	allowed
 batch:DescribeSchedulingPolicies	allowed
 batch:DescribeServiceEnvironments	allowed
-batch:DescribeServiceJob	configuration-value
+batch:DescribeServiceJob	denied	service job requests
 batch:ListConsumableResources	allowed
 batch:ListJobs	allowed
 batch:ListJobsByConsumableResource	allowed
@@ -1110,24 +1110,24 @@ clouddirectory:ListTagsForResource	allowed
 clouddirectory:ListTypedLinkFacetAttributes	allowed
 clouddirectory:ListTypedLinkFacetNames	allowed
 clouddirectory:LookupPolicy	allowed
-cloudformation:BatchDescribeTypeConfigurations	configuration-value
+cloudformation:BatchDescribeTypeConfigurations	denied	extension credentials
 cloudformation:DescribeAccountLimits	allowed
-cloudformation:DescribeChangeSet	configuration-value
+cloudformation:DescribeChangeSet	denied	change set parameters
 cloudformation:DescribeChangeSetHooks	allowed
-cloudformation:DescribeEvents	configuration-value
+cloudformation:DescribeEvents	denied	resource properties
 cloudformation:DescribeGeneratedTemplate	allowed
 cloudformation:DescribeOrganizationsAccess	allowed
 cloudformation:DescribePublisher	allowed
 cloudformation:DescribeResourceScan	allowed
 cloudformation:DescribeStackDriftDetectionStatus	allowed
-cloudformation:DescribeStackEvents	configuration-value
-cloudformation:DescribeStackInstance	configuration-value
+cloudformation:DescribeStackEvents	denied	resource properties
+cloudformation:DescribeStackInstance	denied	parameter overrides
 cloudformation:DescribeStackRefactor	allowed
-cloudformation:DescribeStackResource	configuration-value
-cloudformation:DescribeStackResourceDrifts	configuration-value
+cloudformation:DescribeStackResource	denied	resource Metadata, not masked by NoEcho
+cloudformation:DescribeStackResourceDrifts	denied	resource properties
 cloudformation:DescribeStackResources	allowed
-cloudformation:DescribeStacks	configuration-value
-cloudformation:DescribeStackSet	configuration-value
+cloudformation:DescribeStacks	denied	stack parameters
+cloudformation:DescribeStackSet	denied	stack set parameters
 cloudformation:DescribeStackSetOperation	allowed
 cloudformation:DescribeType	allowed
 cloudformation:DescribeTypeRegistration	allowed
@@ -1135,12 +1135,12 @@ cloudformation:DetectStackDrift	allowed
 cloudformation:DetectStackResourceDrift	allowed
 cloudformation:DetectStackSetDrift	allowed
 cloudformation:EstimateTemplateCost	allowed
-cloudformation:GetGeneratedTemplate	configuration-value
+cloudformation:GetGeneratedTemplate	denied	resource properties
 cloudformation:GetHookResult	allowed
-cloudformation:GetResource	configuration-value
-cloudformation:GetResourceRequestStatus	configuration-value
+cloudformation:GetResource	denied	resource properties
+cloudformation:GetResourceRequestStatus	denied	resource properties
 cloudformation:GetStackPolicy	allowed
-cloudformation:GetTemplate	configuration-value
+cloudformation:GetTemplate	denied	literal Environment and UserData in templates
 cloudformation:GetTemplateSummary	allowed
 cloudformation:ListAllHookResults	allowed
 cloudformation:ListChangeSets	allowed
@@ -1148,12 +1148,12 @@ cloudformation:ListExports	configuration-value
 cloudformation:ListGeneratedTemplates	allowed
 cloudformation:ListHookResults	allowed
 cloudformation:ListImports	allowed
-cloudformation:ListResourceRequests	configuration-value
-cloudformation:ListResources	configuration-value
+cloudformation:ListResourceRequests	denied	resource properties
+cloudformation:ListResources	denied	resource properties
 cloudformation:ListResourceScanRelatedResources	allowed
 cloudformation:ListResourceScanResources	allowed
 cloudformation:ListResourceScans	allowed
-cloudformation:ListStackInstanceResourceDrifts	configuration-value
+cloudformation:ListStackInstanceResourceDrifts	denied	resource properties
 cloudformation:ListStackInstances	allowed
 cloudformation:ListStackRefactorActions	allowed
 cloudformation:ListStackRefactors	allowed
@@ -1692,8 +1692,8 @@ compute-optimizer:GetRDSDatabaseRecommendationProjectedMetrics	allowed
 compute-optimizer:GetRDSDatabaseRecommendations	allowed
 compute-optimizer:GetRecommendationPreferences	allowed
 compute-optimizer:GetRecommendationSummaries	allowed
-config:BatchGetAggregateResourceConfig	configuration-value
-config:BatchGetResourceConfig	configuration-value
+config:BatchGetAggregateResourceConfig	denied	recorded configuration items
+config:BatchGetResourceConfig	denied	recorded configuration items
 config:DeliverConfigSnapshot	allowed
 config:DescribeAggregateComplianceByConfigRules	allowed
 config:DescribeAggregateComplianceByConformancePacks	allowed
@@ -1724,7 +1724,7 @@ config:GetAggregateComplianceDetailsByConfigRule	allowed
 config:GetAggregateConfigRuleComplianceSummary	allowed
 config:GetAggregateConformancePackComplianceSummary	allowed
 config:GetAggregateDiscoveredResourceCounts	allowed
-config:GetAggregateResourceConfig	configuration-value
+config:GetAggregateResourceConfig	denied	recorded configuration items
 config:GetComplianceDetailsByConfigRule	allowed
 config:GetComplianceDetailsByResource	allowed
 config:GetComplianceSummaryByConfigRule	allowed
@@ -1737,8 +1737,8 @@ config:GetDiscoveredResourceCounts	allowed
 config:GetOrganizationConfigRuleDetailedStatus	allowed
 config:GetOrganizationConformancePackDetailedStatus	allowed
 config:GetOrganizationCustomRulePolicy	allowed
-config:GetResourceConfigHistory	configuration-value
-config:GetResourceEvaluationSummary	allowed
+config:GetResourceConfigHistory	denied	recorded configuration items
+config:GetResourceEvaluationSummary	denied	evaluated resource configuration
 config:GetStoredQuery	allowed
 config:ListAggregateDiscoveredResources	allowed
 config:ListConfigurationRecorders	allowed
@@ -1748,8 +1748,8 @@ config:ListDiscoveredResources	allowed
 config:ListResourceEvaluations	allowed
 config:ListStoredQueries	allowed
 config:ListTagsForResource	allowed
-config:SelectAggregateResourceConfig	configuration-value
-config:SelectResourceConfig	configuration-value
+config:SelectAggregateResourceConfig	denied	recorded configuration items
+config:SelectResourceConfig	denied	recorded configuration items
 connect:DescribeAgentStatus	allowed
 connect:DescribeAttachedFilesConfiguration	allowed
 connect:DescribeAuthenticationProfile	allowed
@@ -2405,7 +2405,7 @@ ec2:DescribeImageUsageReportEntries	allowed
 ec2:DescribeImageUsageReports	allowed
 ec2:DescribeImportImageTasks	allowed
 ec2:DescribeImportSnapshotTasks	allowed
-ec2:DescribeInstanceAttribute	configuration-value
+ec2:DescribeInstanceAttribute	denied	instance user data
 ec2:DescribeInstanceConnectEndpoints	allowed
 ec2:DescribeInstanceCreditSpecifications	allowed
 ec2:DescribeInstanceEventNotificationAttributes	allowed
@@ -2434,7 +2434,7 @@ ec2:DescribeIpamScopes	allowed
 ec2:DescribeIpv6Pools	allowed
 ec2:DescribeKeyPairs	allowed
 ec2:DescribeLaunchTemplates	allowed
-ec2:DescribeLaunchTemplateVersions	configuration-value
+ec2:DescribeLaunchTemplateVersions	denied	launch template user data
 ec2:DescribeLocalGatewayRouteTablePermissions	allowed
 ec2:DescribeLocalGatewayRouteTables	allowed
 ec2:DescribeLocalGatewayRouteTableVirtualInterfaceGroupAssociations	allowed
@@ -2487,8 +2487,8 @@ ec2:DescribeSnapshotTierStatus	allowed
 ec2:DescribeSpotDatafeedSubscription	allowed
 ec2:DescribeSpotFleetInstances	allowed
 ec2:DescribeSpotFleetRequestHistory	allowed
-ec2:DescribeSpotFleetRequests	configuration-value
-ec2:DescribeSpotInstanceRequests	configuration-value
+ec2:DescribeSpotFleetRequests	denied	launch specification user data
+ec2:DescribeSpotInstanceRequests	denied	launch specification user data field
 ec2:DescribeSpotPriceHistory	allowed
 ec2:DescribeStaleSecurityGroups	allowed
 ec2:DescribeStoreImageTasks	allowed
@@ -2586,7 +2586,7 @@ ec2:GetIpamRouteOriginAuthorizations	allowed
 ec2:GetIpamRouteProtectionFindings	allowed
 ec2:GetIpamRoutingPolicyRegistrationDeltas	allowed
 ec2:GetIpamRoutingPolicyRegistrations	allowed
-ec2:GetLaunchTemplateData	configuration-value
+ec2:GetLaunchTemplateData	denied	user data
 ec2:GetManagedPrefixListAssociations	allowed
 ec2:GetManagedPrefixListEntries	allowed
 ec2:GetManagedResourceVisibility	allowed
@@ -2672,16 +2672,16 @@ ecs:DescribeContainerInstances	allowed
 ecs:DescribeDaemon	allowed
 ecs:DescribeDaemonDeployments	allowed
 ecs:DescribeDaemonRevisions	allowed
-ecs:DescribeDaemonTaskDefinition	configuration-value
-ecs:DescribeExpressGatewayService	configuration-value
+ecs:DescribeDaemonTaskDefinition	denied	container environments
+ecs:DescribeExpressGatewayService	denied	container environments
 ecs:DescribeGateway	allowed
 ecs:DescribeGatewayResources	allowed
 ecs:DescribeGatewayRoute	allowed
 ecs:DescribeServiceDeployments	allowed
 ecs:DescribeServiceRevisions	allowed
 ecs:DescribeServices	allowed
-ecs:DescribeTaskDefinition	configuration-value
-ecs:DescribeTasks	configuration-value
+ecs:DescribeTaskDefinition	denied	container environments
+ecs:DescribeTasks	denied	container environment overrides
 ecs:DescribeTaskSets	allowed
 ecs:GetTaskProtection	allowed
 ecs:ListAccountSettings	allowed
@@ -4065,7 +4065,7 @@ lambda:GetEventSourceMapping	allowed
 lambda:GetFunction	denied
 lambda:GetFunctionCodeSigningConfig	allowed
 lambda:GetFunctionConcurrency	allowed
-lambda:GetFunctionConfiguration	configuration-value
+lambda:GetFunctionConfiguration	denied	environment variables
 lambda:GetFunctionEventInvokeConfig	allowed
 lambda:GetFunctionRecursionConfig	allowed
 lambda:GetFunctionScalingConfig	allowed
@@ -4075,7 +4075,7 @@ lambda:GetLayerVersionPolicy	allowed
 lambda:GetMicrovm	allowed
 lambda:GetMicrovmImage	allowed
 lambda:GetMicrovmImageBuild	allowed
-lambda:GetMicrovmImageVersion	configuration-value
+lambda:GetMicrovmImageVersion	denied	environment variables
 lambda:GetNetworkConnector	allowed
 lambda:GetPolicy	allowed
 lambda:GetProvisionedConcurrencyConfig	allowed
@@ -4084,14 +4084,14 @@ lambda:GetRuntimeManagementConfig	allowed
 lambda:GetWebAccountSettings	allowed
 lambda:GetWebFunction	allowed
 lambda:GetWebFunctionEndpoint	allowed
-lambda:GetWebFunctionRevision	configuration-value
+lambda:GetWebFunctionRevision	denied	environment variables
 lambda:ListAliases	allowed
 lambda:ListCapacityProviders	allowed
 lambda:ListCodeSigningConfigs	allowed
 lambda:ListDurableExecutionsByFunction	allowed
 lambda:ListEventSourceMappings	allowed
 lambda:ListFunctionEventInvokeConfigs	allowed
-lambda:ListFunctions	configuration-value
+lambda:ListFunctions	denied	environment variables
 lambda:ListFunctionsByCodeSigningConfig	allowed
 lambda:ListFunctionUrlConfigs	allowed
 lambda:ListFunctionVersionsByCapacityProvider	allowed
@@ -4101,13 +4101,13 @@ lambda:ListManagedMicrovmImages	allowed
 lambda:ListManagedMicrovmImageVersions	allowed
 lambda:ListMicrovmImageBuilds	allowed
 lambda:ListMicrovmImages	allowed
-lambda:ListMicrovmImageVersions	configuration-value
+lambda:ListMicrovmImageVersions	denied	environment variables
 lambda:ListMicrovms	allowed
 lambda:ListNetworkConnectors	allowed
 lambda:ListNetworkConnectorVersions	allowed
 lambda:ListProvisionedConcurrencyConfigs	allowed
 lambda:ListTags	allowed
-lambda:ListVersionsByFunction	configuration-value
+lambda:ListVersionsByFunction	denied	environment variables
 lambda:ListWebFunctionEndpoints	allowed
 lambda:ListWebFunctionRevisions	allowed
 lambda:ListWebFunctions	allowed

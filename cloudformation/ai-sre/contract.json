@@ -19,12 +19,12 @@
         "development"
       ]
     },
-    "AllowConfigurationValues": {
+    "ReadScope": {
       "Type": "String",
-      "Default": "true",
+      "Default": "curated",
       "AllowedValues": [
-        "true",
-        "false"
+        "curated",
+        "broad"
       ]
     },
     "PermissionsBoundaryArn": {

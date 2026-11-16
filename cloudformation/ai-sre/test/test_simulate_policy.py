@@ -4,7 +4,7 @@ The stub decides each request from better-stack-ai-sre.yaml's policies, plus AWS
 fixtures/read-only-access-policy.json holds it) where the template attaches it: explicit deny, then allow, else
 implicit deny; Action, Resource and NotResource wildcards; StringEquals, StringLike and StringNotLike on the
 request's context. So the script's expectations are checked against the template itself in both
-AllowConfigurationValues settings, and against the lists of the allow and deny tables below.
+ReadScope settings, and against the lists of the allow and deny tables below.
 """
 
 import io
@@ -41,19 +41,28 @@ DENIED_IN_EVERY_SETTING = [
     "codecommit:GetFile", "codeartifact:GetPackageVersionAsset", "dms:DescribeEndpoints", "ds:DescribeDirectories",
 ]
 DENIED_API_GATEWAY_PATHS = ["/apikeys", "/apikeys/key123", "/usageplans/plan123/keys", "/usageplans/plan123/keys/key123"]
+# Where customers keep secrets, denied with either ReadScope.
+DENIED_SECRET_BEARING_CONFIGURATION = [
+    "lambda:GetFunctionConfiguration", "lambda:ListFunctions", "lambda:ListVersionsByFunction",
+    "lambda:ListMicrovmImageVersions", "lambda:GetMicrovmImageVersion", "lambda:GetWebFunctionRevision",
+    "ecs:DescribeTaskDefinition", "ecs:DescribeTasks", "ecs:DescribeExpressGatewayService",
+    "ecs:DescribeDaemonTaskDefinition", "ec2:DescribeInstanceAttribute", "ec2:DescribeLaunchTemplateVersions",
+    "ec2:DescribeSpotFleetRequests", "ec2:GetLaunchTemplateData", "ec2:DescribeSpotInstanceRequests",
+    "autoscaling:DescribeLaunchConfigurations", "batch:DescribeJobDefinitions", "batch:DescribeJobs",
+    "batch:DescribeServiceJob", "cloudformation:DescribeStacks", "cloudformation:DescribeChangeSet",
+    "cloudformation:DescribeStackSet", "cloudformation:DescribeStackInstance", "cloudformation:DescribeStackResource",
+    "cloudformation:GetTemplate", "cloudformation:BatchDescribeTypeConfigurations", "cloudformation:DescribeStackEvents",
+    "cloudformation:DescribeEvents", "cloudformation:DescribeStackResourceDrifts",
+    "cloudformation:ListStackInstanceResourceDrifts", "cloudformation:GetResource", "cloudformation:ListResources",
+    "cloudformation:GetGeneratedTemplate", "cloudformation:ListResourceRequests", "cloudformation:GetResourceRequestStatus",
+    "config:BatchGetResourceConfig", "config:BatchGetAggregateResourceConfig", "config:GetResourceConfigHistory",
+    "config:GetAggregateResourceConfig", "config:SelectResourceConfig", "config:SelectAggregateResourceConfig",
+    "config:GetResourceEvaluationSummary",
+]
+# Configuration values that aren't secrets by nature: readable with broad, denied with curated.
 DENIED_WITHOUT_CONFIGURATION_VALUES = [
-    "lambda:ListFunctions", "lambda:ListVersionsByFunction", "lambda:GetFunctionConfiguration",
-    "ecs:DescribeTaskDefinition", "ecs:DescribeTasks", "batch:DescribeJobDefinitions", "batch:DescribeJobs",
-    "ec2:DescribeInstanceAttribute", "ec2:DescribeLaunchTemplateVersions", "ec2:DescribeSpotFleetRequests",
-    "ec2:DescribeSpotInstanceRequests", "cloudformation:DescribeEvents",
-    "autoscaling:DescribeLaunchConfigurations", "cloudformation:DescribeStacks", "cloudformation:DescribeChangeSet",
-    "cloudformation:DescribeStackEvents", "cloudformation:ListExports", "events:ListTargetsByRule", "events:DescribeSubscriber",
-    "firehose:DescribeDeliveryStream", "cloudformation:DescribeStackResourceDrifts",
-    "cloudformation:ListStackInstanceResourceDrifts", "cloudformation:DescribeStackSet",
-    "cloudformation:DescribeStackInstance", "eks:DescribeAddon",
-    "ecs:DescribeExpressGatewayService", "ecs:DescribeDaemonTaskDefinition", "batch:DescribeServiceJob",
-    "lambda:ListMicrovmImageVersions", "cloudformation:DescribeStackResource", "cloudformation:ListResources",
-    "cloudformation:ListResourceRequests",
+    "cloudformation:ListExports", "eks:DescribeAddon", "events:ListTargetsByRule", "events:DescribeSubscriber",
+    "firehose:DescribeDeliveryStream",
 ]
 STAGE_PATHS = ["/restapis/abc123/stages", "/restapis/abc123/stages/prod", "/apis/abc123/stages", "/apis/abc123/stages/prod"]
 # Readable in both settings: the investigation reads, the self-read and the MCP token.
@@ -63,9 +72,9 @@ ALLOWED_IN_EVERY_SETTING = [
     "application-autoscaling:DescribeScalableTargets", "iam:ListAccountAliases", "account:ListRegions",
 ]
 NEVER_ALLOWED = ["signin:AuthorizeOAuth2Access"]
-# Only ReadOnlyAccess grants these: readable with true, not with false.
+# Only ReadOnlyAccess grants these: readable with broad, not with curated.
 READ_ONLY_ACCESS_ONLY = ["codedeploy:GetDeployment", "iam:ListRoles", "logs:TestMetricFilter", "organizations:DescribeOrganization"]
-# BetterStackAiSreBroadAccess, with true only.
+# BetterStackAiSreBroadAccess, with broad only.
 BROAD_ACCESS = [
     "cloudtrail:StartQuery", "cloudtrail:CancelQuery", "pi:GetPerformanceAnalysisReport",
     "pi:ListPerformanceAnalysisReports", "eks-mcp:InvokeMcp", "eks-mcp:CallReadOnlyTool", "ecs-mcp:UseMcp",
@@ -73,10 +82,10 @@ BROAD_ACCESS = [
 ]
 
 
-def statements(allow_configuration_values):
+def statements(broad):
     """The role's inline statements and, where the template attaches it, ReadOnlyAccess's."""
-    found = template_policies.role_statements(allow_configuration_values)
-    for arn in template_policies.managed_policy_arns(allow_configuration_values):
+    found = template_policies.role_statements(broad)
+    for arn in template_policies.managed_policy_arns(broad):
         assert arn == template_policies.READ_ONLY_ACCESS_ARN, f"the stub knows no managed policy {arn}"
         with open(READ_ONLY_ACCESS_FIXTURE, encoding="utf-8") as f:
             found += json.load(f)["PolicyDocument"]["Statement"]
@@ -130,8 +139,8 @@ def decide(policy_statements, action, resource, context):
 class StubIam:
     """Answers SimulatePrincipalPolicy from the template's policies, two results per page."""
 
-    def __init__(self, allow_configuration_values, override=None):
-        self.statements = statements(allow_configuration_values)
+    def __init__(self, broad, override=None):
+        self.statements = statements(broad)
         self.override = override or {}
         self.calls = []
 
@@ -164,11 +173,11 @@ class SimulatePolicyTest(unittest.TestCase):
         out = io.StringIO()
         return sim.run(iam, ROLE_ARN, allow, "us-east-1", out=out), out.getvalue()
 
-    def test_every_expectation_matches_the_template_with_configuration_values(self):
+    def test_every_expectation_matches_the_template_with_broad_scope(self):
         failures, out = self.run_script(StubIam(True), True)
         self.assertEqual(failures, 0, out)
 
-    def test_every_expectation_matches_the_template_without_configuration_values(self):
+    def test_every_expectation_matches_the_template_with_curated_scope(self):
         failures, out = self.run_script(StubIam(False), False)
         self.assertEqual(failures, 0, out)
 
@@ -178,20 +187,20 @@ class SimulatePolicyTest(unittest.TestCase):
         self.assertEqual(failures, 1)
         self.assertIn("FAIL cloudwatch:DescribeAlarms on *: implicitDeny, expected allowed", out)
 
-    def test_a_role_deployed_with_true_fails_every_check_that_differs_with_false(self):
+    def test_a_broad_role_fails_every_check_that_differs_with_curated(self):
         # The configuration deny and the broad reads are what the setting switches; checked as if it were false, a
-        # role deployed with true fails exactly the checks whose two decisions differ.
+        # role deployed with broad fails exactly the checks whose two decisions differ.
         failures, out = self.run_script(StubIam(True), False)
         self.assertEqual(failures, sum(1 for _, _, _, t, f in sim.CHECKS if t != f), out)
         self.assertIn("FAIL codedeploy:GetDeployment on *: allowed, expected implicitDeny", out)
 
-    def test_the_restricted_role_has_no_read_only_access(self):
+    def test_the_curated_role_has_no_read_only_access(self):
         self.assertEqual(template_policies.managed_policy_arns(False), [])
         self.assertEqual(template_policies.managed_policy_arns(True), [template_policies.READ_ONLY_ACCESS_ARN])
         for action in READ_ONLY_ACCESS_ONLY + BROAD_ACCESS:
             self.assertEqual(expected(action), [sim.BROAD], action)
 
-    def test_s3_objects_are_readable_under_aws_logs_only_and_only_with_true(self):
+    def test_s3_objects_are_readable_under_aws_logs_only_and_only_with_broad(self):
         self.assertEqual(expected("s3:GetObject", "arn:aws:s3:::b/AWSLogs/1/x"), [sim.BROAD])
         self.assertEqual(expected("s3:GetObject", "arn:aws:s3:::b/p/AWSLogs/1/x"), [sim.BROAD])
         for resource in ("arn:aws:s3:::b/data/x", sim.ANY, sim.ACCESS_POINT_LOG_OBJECT):
@@ -200,21 +209,21 @@ class SimulatePolicyTest(unittest.TestCase):
         self.assertEqual(expected("s3-object-lambda:GetObject", sim.OBJECT_LAMBDA_LOG_OBJECT), [(sim.DENY, sim.DENY)])
         self.assertEqual(expected("s3:ListBucket", "arn:aws:s3:::b"), [sim.BROAD])
 
-    def test_kms_decrypt_through_each_named_service_with_true_only(self):
+    def test_kms_decrypt_through_each_named_service_with_broad_only(self):
         for service in sim.KMS_BROAD_SERVICES:
             rows = [(t, f) for a, _, c, t, f in sim.CHECKS if a == "kms:Decrypt" and c == sim.via(service)]
             self.assertEqual(rows, [sim.BROAD], service)
-        for service in ("secretsmanager", "cloudtrail"):
+        for service in ("lambda", "secretsmanager", "cloudtrail"):
             rows = [(t, f) for a, _, c, t, f in sim.CHECKS if a == "kms:Decrypt" and c == sim.via(service)]
             self.assertEqual(rows, [(sim.DENY, sim.DENY)], service)
 
     def test_the_policies_fit_iam_quotas_in_both_settings(self):
         for allow in (True, False):
-            self.assertLess(template_policies.inline_size(allow), 10240, f"inline, AllowConfigurationValues={allow}")
+            self.assertLess(template_policies.inline_size(allow), 10240, f"inline, broad={allow}")
             sizes = template_policies.stack_policy_sizes(allow)
             self.assertEqual(len(sizes), 2, sizes)
             for name, size in sizes.items():
-                self.assertLess(size, 6144, f"{name}, AllowConfigurationValues={allow}")
+                self.assertLess(size, 6144, f"{name}, broad={allow}")
             attached = len(sizes) + len(template_policies.managed_policy_arns(allow))
             self.assertLessEqual(attached, 20, "a role takes 20 managed policies by default")
 
@@ -242,6 +251,8 @@ class SimulatePolicyTest(unittest.TestCase):
             self.assertEqual(expected(action), [(sim.DENY, sim.DENY)], action)
         for path in DENIED_API_GATEWAY_PATHS:
             self.assertEqual(expected("apigateway:GET", sim.apigw(path)), [(sim.DENY, sim.DENY)], path)
+        for action in DENIED_SECRET_BEARING_CONFIGURATION:
+            self.assertEqual(expected(action), [(sim.DENY, sim.DENY)], action)
         for action in DENIED_WITHOUT_CONFIGURATION_VALUES:
             self.assertEqual(expected(action), [(sim.ALLOW, sim.DENY)], action)
         for path in STAGE_PATHS:
@@ -265,7 +276,7 @@ class SimulatePolicyTest(unittest.TestCase):
         # A deny added to the template without a CHECKS entry would never reach the policy simulator.
         checks = [(a, sim.fill(r, ROLE_ARN, "us-east-1"), t, f) for a, r, _, t, f in sim.CHECKS]
         missing = []
-        for statement in statements(allow_configuration_values=False):
+        for statement in statements(broad=False):
             if statement["Effect"] != "Deny":
                 continue
             for action in as_list(statement["Action"]):

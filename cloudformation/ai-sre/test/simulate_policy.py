@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Asserts what a deployed Better Stack AI SRE role may and may not do, with IAM's policy simulator.
 
-Every read the role must allow, every explicit deny, and every read AllowConfigurationValues=false must deny is
-listed in CHECKS below with the decision expected under each setting of AllowConfigurationValues. With true the role
-also has AWS's ReadOnlyAccess, so reads only that policy grants are allowed there and not with false. The script asks
+Every read the role must allow, every explicit deny, and every read ReadScope=curated must deny is
+listed in CHECKS below with the decision expected under each setting of ReadScope. With broad the role
+also has AWS's ReadOnlyAccess, so reads only that policy grants are allowed there and not with curated. The script asks
 iam:SimulatePrincipalPolicy for each one on the given role and fails on any decision that differs. The simulator
 evaluates the role's own policies (inline and attached) and its permissions boundary, not service control policies or
 resource policies.
 
-Usage: simulate_policy.py --role-arn ARN --allow-configuration-values true|false [--region us-east-1]
+Usage: simulate_policy.py --role-arn ARN --read-scope curated|broad [--region us-east-1]
 Needs iam:SimulatePrincipalPolicy on the role. Calls nothing else.
 """
 
@@ -43,12 +43,12 @@ def both(decision):
     return decision, decision
 
 
-CONFIG = (ALLOW, DENY)  # readable by default, denied with AllowConfigurationValues=false
-BROAD = (ALLOW, NONE)  # granted by ReadOnlyAccess or BetterStackAiSreBroadAccess, so only with true
-# kms:ViaService values the default setting may decrypt through, besides CloudWatch Logs (allowed in both).
-KMS_BROAD_SERVICES = ["lambda", "s3", "xray", "rds", "states", "glue"]
+CONFIG = (ALLOW, DENY)  # readable with ReadScope=broad, denied with ReadScope=curated
+BROAD = (ALLOW, NONE)  # granted by ReadOnlyAccess or BetterStackAiSreBroadAccess, so only with ReadScope=broad
+# kms:ViaService values ReadScope=broad may decrypt through, besides CloudWatch Logs (allowed in both).
+KMS_BROAD_SERVICES = ["s3", "xray", "rds", "states", "glue"]
 
-# (action, resource, context, decision with true, decision with false)
+# (action, resource, context, decision with ReadScope=broad, decision with ReadScope=curated)
 CHECKS = [
     # Copied from the read access of better-stack-full.yaml.
     ("cloudwatch:DescribeAlarms", ANY, (), *both(ALLOW)),
@@ -126,11 +126,13 @@ CHECKS = [
       for policy in (DENY_DATA_POLICY, DENY_STORED_DATA_POLICY)],
     ("iam:GetPolicy", OTHER_POLICY, (), *BROAD),
     ("iam:GetPolicyVersion", OTHER_POLICY, (), *BROAD),
-    # A customer managed key: through CloudWatch Logs in both settings, through the named services with true only
-    # (not denied with false, but nothing allows it), never directly or through any other service.
+    # A customer managed key: through CloudWatch Logs in both settings, through the named services with broad only
+    # (not denied with curated, but nothing allows it), never directly or through any other service.
     ("kms:Decrypt", ANY, via("logs"), *both(ALLOW)),
     ("kms:DescribeKey", ANY, via("logs"), *both(ALLOW)),
     *[("kms:Decrypt", ANY, via(service), *BROAD) for service in KMS_BROAD_SERVICES],
+    # Not through Lambda: the only Lambda reads that decrypt are of environment variables, which are denied.
+    ("kms:Decrypt", ANY, via("lambda"), *both(DENY)),
     ("kms:Decrypt", ANY, via("secretsmanager"), *both(DENY)),
     ("kms:Decrypt", ANY, via("cloudtrail"), *both(DENY)),
     ("kms:Decrypt", ANY, (), *both(DENY)),
@@ -145,7 +147,7 @@ CHECKS = [
     ("lambda:InvokeFunction", ANY, (), *both(DENY)),
     ("s3:GetObject", ANY, (), *both(DENY)),
     ("s3:GetObjectVersion", ANY, (), *both(DENY)),
-    # S3 objects: only the logs AWS services deliver under an AWSLogs/ key, and only with true.
+    # S3 objects: only the logs AWS services deliver under an AWSLogs/ key, and only with ReadScope=broad.
     ("s3:GetObject", "arn:aws:s3:::b/AWSLogs/1/x", (), *BROAD),
     ("s3:GetObject", "arn:aws:s3:::b/p/AWSLogs/1/x", (), *BROAD),
     ("s3:GetObjectVersion", "arn:aws:s3:::b/AWSLogs/1/x", (), *BROAD),
@@ -225,40 +227,32 @@ CHECKS = [
         "codecommit:GitPull", "codecommit:GetFile", "codecommit:GetFolder", "codecommit:GetBlob",
         "codeartifact:ReadFromRepository", "codeartifact:GetPackageVersionAsset",
     ]],
-    # Configuration values: readable by default, denied with AllowConfigurationValues=false.
-    ("lambda:ListFunctions", ANY, (), *CONFIG),
-    ("lambda:ListVersionsByFunction", ANY, (), *CONFIG),
-    ("lambda:GetFunctionConfiguration", ANY, (), *CONFIG),
-    ("ecs:DescribeTaskDefinition", ANY, (), *CONFIG),
-    ("ecs:DescribeTasks", ANY, (), *CONFIG),
-    ("ecs:DescribeExpressGatewayService", ANY, (), *CONFIG),
-    ("ecs:DescribeDaemonTaskDefinition", ANY, (), *CONFIG),
-    ("batch:DescribeJobDefinitions", ANY, (), *CONFIG),
-    ("batch:DescribeJobs", ANY, (), *CONFIG),
-    ("batch:DescribeServiceJob", ANY, (), *CONFIG),
-    ("lambda:ListMicrovmImageVersions", ANY, (), *CONFIG),
-    ("cloudformation:DescribeStackResource", ANY, (), *CONFIG),
-    ("ec2:DescribeInstanceAttribute", ANY, (), *CONFIG),
-    ("ec2:DescribeLaunchTemplateVersions", ANY, (), *CONFIG),
-    ("ec2:DescribeSpotFleetRequests", ANY, (), *CONFIG),
-    ("ec2:DescribeSpotInstanceRequests", ANY, (), *CONFIG),
-    ("autoscaling:DescribeLaunchConfigurations", ANY, (), *CONFIG),
-    ("cloudformation:DescribeStacks", ANY, (), *CONFIG),
-    ("cloudformation:DescribeChangeSet", ANY, (), *CONFIG),
-    ("cloudformation:DescribeStackEvents", ANY, (), *CONFIG),
-    ("cloudformation:DescribeEvents", ANY, (), *CONFIG),
+    # Where customers keep secrets: denied with either ReadScope.
+    *[(action, ANY, (), *both(DENY)) for action in [
+        "lambda:ListFunctions", "lambda:ListVersionsByFunction", "lambda:GetFunctionConfiguration",
+        "ecs:DescribeTaskDefinition", "ecs:DescribeTasks", "ecs:DescribeExpressGatewayService",
+        "ecs:DescribeDaemonTaskDefinition", "batch:DescribeJobDefinitions", "batch:DescribeJobs",
+        "batch:DescribeServiceJob", "lambda:ListMicrovmImageVersions", "ec2:DescribeInstanceAttribute",
+        "ec2:DescribeLaunchTemplateVersions", "ec2:DescribeSpotFleetRequests",
+        "autoscaling:DescribeLaunchConfigurations", "cloudformation:DescribeStacks",
+        "cloudformation:DescribeChangeSet", "cloudformation:DescribeStackResource",
+        "cloudformation:DescribeStackSet", "cloudformation:DescribeStackInstance", "lambda:GetMicrovmImageVersion",
+        "lambda:GetWebFunctionRevision", "ec2:GetLaunchTemplateData", "ec2:DescribeSpotInstanceRequests",
+        "cloudformation:GetTemplate", "cloudformation:BatchDescribeTypeConfigurations",
+        "cloudformation:DescribeStackEvents", "cloudformation:DescribeEvents",
+        "cloudformation:DescribeStackResourceDrifts", "cloudformation:ListStackInstanceResourceDrifts",
+        "cloudformation:GetResource", "cloudformation:ListResources", "cloudformation:GetGeneratedTemplate",
+        "cloudformation:ListResourceRequests", "cloudformation:GetResourceRequestStatus",
+        "config:BatchGetResourceConfig", "config:BatchGetAggregateResourceConfig", "config:GetResourceConfigHistory",
+        "config:GetAggregateResourceConfig", "config:SelectResourceConfig", "config:SelectAggregateResourceConfig",
+        "config:GetResourceEvaluationSummary",
+    ]],
+    # Configuration values that aren't secrets by nature: readable with ReadScope=broad, denied with curated.
     ("cloudformation:ListExports", ANY, (), *CONFIG),
-    ("cloudformation:DescribeStackResourceDrifts", ANY, (), *CONFIG),
-    ("cloudformation:ListStackInstanceResourceDrifts", ANY, (), *CONFIG),
-    ("cloudformation:DescribeStackSet", ANY, (), *CONFIG),
-    ("cloudformation:DescribeStackInstance", ANY, (), *CONFIG),
-    ("cloudformation:ListResources", ANY, (), *CONFIG),
-    ("cloudformation:ListResourceRequests", ANY, (), *CONFIG),
-    # Execution input and output and resource request status: readable with true, not granted with false.
+    # Execution input and output and resource request status: readable with broad, not granted with curated.
     ("states:DescribeExecution", ANY, (), *BROAD),
     ("states:GetExecutionHistory", ANY, (), *BROAD),
     ("swf:GetWorkflowExecutionHistory", ANY, (), *BROAD),
-    ("cloudformation:GetResourceRequestStatus", ANY, (), *BROAD),
     ("eks:DescribeAddon", ANY, (), *CONFIG),
     ("events:ListTargetsByRule", ANY, (), *CONFIG),
     ("events:DescribeSubscriber", ANY, (), *CONFIG),
@@ -323,13 +317,13 @@ CHECKS = [
         "medialive:DescribeInputDeviceThumbnail", "rds:DescribeTenantDatabases", "dms:DescribeEndpoints",
         "ds:DescribeDirectories",
     ]],
-    # Content like logs, readable with true only: whatever was pasted into a Support case, and command output.
+    # Content like logs, readable with ReadScope=broad only: whatever was pasted into a Support case, and command output.
     *[(action, ANY, (), *BROAD) for action in [
         "support:DescribeCases", "support:DescribeCommunication", "support:DescribeCommunications",
         "support:SearchForCases", "codebuild:BatchGetCommandExecutions", "codebuild:ListCommandExecutionsForSandbox",
     ]],
-    # With true: a sample read in each service family only ReadOnlyAccess grants, and the reads it lacks that
-    # BetterStackAiSreBroadAccess adds. With false: none of them.
+    # With broad: a sample read in each service family only ReadOnlyAccess grants, and the reads it lacks that
+    # BetterStackAiSreBroadAccess adds. With curated: none of them.
     *[(action, ANY, (), *BROAD) for action in [
         "codedeploy:GetDeployment", "codebuild:BatchGetProjects", "config:DescribeConfigRules",
         "ecr:DescribeRepositories", "acm:DescribeCertificate", "servicequotas:GetServiceQuota",
@@ -364,12 +358,12 @@ def fill(value, role_arn, region):
     return role_arn if value == SELF else value.format(account=parse_role_arn(role_arn), region=region, suffix=suffix)
 
 
-def expectations(role_arn, allow_configuration_values, region):
+def expectations(role_arn, broad, region):
     """{(resource, context): {action: decision}}, the calls the simulator gets."""
     grouped = defaultdict(dict)
     for action, resource, context, when_true, when_false in CHECKS:
         key = (fill(resource, role_arn, region), tuple((k, fill(v, role_arn, region)) for k, v in context))
-        grouped[key][action] = when_true if allow_configuration_values else when_false
+        grouped[key][action] = when_true if broad else when_false
     return grouped
 
 
@@ -387,10 +381,10 @@ def simulate(iam, role_arn, actions, resource, context):
     return decisions
 
 
-def run(iam, role_arn, allow_configuration_values, region, out=sys.stdout):
+def run(iam, role_arn, broad, region, out=sys.stdout):
     """Prints a line per check and returns the number of checks whose decision differs."""
     failures = 0
-    for (resource, context), expected in expectations(role_arn, allow_configuration_values, region).items():
+    for (resource, context), expected in expectations(role_arn, broad, region).items():
         actions = sorted(expected)
         decisions = {}
         for i in range(0, len(actions), 50):
@@ -407,14 +401,14 @@ def run(iam, role_arn, allow_configuration_values, region, out=sys.stdout):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--role-arn", required=True)
-    parser.add_argument("--allow-configuration-values", required=True, choices=["true", "false"])
+    parser.add_argument("--read-scope", required=True, choices=["curated", "broad"])
     parser.add_argument("--region", default="us-east-1", help="the region the resource ARNs name (default us-east-1)")
     args = parser.parse_args(argv)
     import boto3
 
-    allow = args.allow_configuration_values == "true"
-    failures = run(boto3.client("iam"), args.role_arn, allow, args.region)
-    print(f"{len(CHECKS) - failures} of {len(CHECKS)} decisions as expected with AllowConfigurationValues={args.allow_configuration_values}")
+    broad = args.read_scope == "broad"
+    failures = run(boto3.client("iam"), args.role_arn, broad, args.region)
+    print(f"{len(CHECKS) - failures} of {len(CHECKS)} decisions as expected with ReadScope={args.read_scope}")
     return 1 if failures else 0
 
 

@@ -30,7 +30,7 @@ Metadata:
       - Label:
           default: Options
         Parameters:
-          - AllowConfigurationValues
+          - ReadScope
           - PermissionsBoundaryArn
     ParameterLabels:
       ExternalId:
@@ -39,8 +39,8 @@ Metadata:
         default: Better Stack team that gets access (set by Better Stack, don't change)
       BetterStackEnvironment:
         default: Better Stack environment (set by Better Stack, don't change)
-      AllowConfigurationValues:
-        default: Broad read access, including environment variables and other configuration values
+      ReadScope:
+        default: Read scope (curated, or broad with AWS's ReadOnlyAccess)
       PermissionsBoundaryArn:
         default: Permissions boundary ARN (optional)
 
@@ -67,16 +67,18 @@ Parameters:
       - staging
       - development
 
-  AllowConfigurationValues:
+  # The one switch between the two roles. Every part of the template that depends on it uses the Curated condition.
+  ReadScope:
     Type: String
     Description: >-
-      When true, the role gets AWS's ReadOnlyAccess policy, with secrets, credentials and stored data denied. When
-      false, it gets a fixed, shorter list of reads and denies every read Better Stack knows returns environment
-      variables, user data or parameter values.
-    Default: 'true'
+      curated: a fixed list of reads Better Stack maintains. broad: AWS's ReadOnlyAccess as well, which AWS extends as
+      it adds services. Both deny secrets, credentials, stored data, Lambda and ECS environment variables, EC2 user
+      data, Batch job definitions and stack parameters. With broad, other services' environment settings (such as
+      CodeBuild, App Runner, Amplify, Elastic Beanstalk and Glue) stay readable.
+    Default: curated
     AllowedValues:
-      - 'true'
-      - 'false'
+      - curated
+      - broad
 
   PermissionsBoundaryArn:
     Type: String
@@ -91,7 +93,7 @@ Mappings:
 
 Conditions:
   HasPermissionsBoundary: !Not [!Equals [!Ref PermissionsBoundaryArn, '']]
-  DenyConfigurationValues: !Equals [!Ref AllowConfigurationValues, 'false']
+  Curated: !Equals [!Ref ReadScope, 'curated']
   HasBetterStackTeam: !Not [!Equals [!Ref BetterStackTeam, '']]
 
 Resources:
@@ -106,7 +108,7 @@ Resources:
         - !Sub 'Read-only access for Better Stack AI SRE. Team: ${BetterStackTeam}'
         - Read-only access for Better Stack AI SRE.
       PermissionsBoundary: !If [HasPermissionsBoundary, !Ref PermissionsBoundaryArn, !Ref 'AWS::NoValue']
-      # AWS's ReadOnlyAccess in the default setting only. AWS extends it as it adds services; the denies still apply to
+      # AWS's ReadOnlyAccess with ReadScope=broad only. AWS extends it as it adds services; the denies still apply to
       # everything it grants.
       ManagedPolicyArns:
         # The explicit denies, in both settings, so that ReadOnlyAccess or a broader policy attached to the role later
@@ -115,7 +117,7 @@ Resources:
         - !Ref AiSreDenyDataPolicy
         - !Ref AiSreDenyStoredDataPolicy
         - !If
-          - DenyConfigurationValues
+          - Curated
           - !Ref 'AWS::NoValue'
           - !Sub 'arn:${AWS::Partition}:iam::aws:policy/ReadOnlyAccess'
       AssumeRolePolicyDocument:
@@ -184,10 +186,10 @@ Resources:
                 Action:
                   - signin:CreateOAuth2Token
                 Resource: 'arn:aws:signin:*:*:service-principal/aws-mcp.amazonaws.com'
-        # The curated read list, the whole of what the role reads with AllowConfigurationValues=false. With true,
+        # The curated read list, the whole of what the role reads with ReadScope=curated, the default. With broad,
         # ReadOnlyAccess grants these reads and more.
         - !If
-          - DenyConfigurationValues
+          - Curated
           - PolicyName: BetterStackAiSreReadAccess
             PolicyDocument:
               Version: '2012-10-17'
@@ -285,7 +287,7 @@ Resources:
                     - cloudtrail:ListTrails
                     - health:Describe*
                   Resource: '*'
-                # Logs Insights, recent API activity, traces, deployment history from stack events, scaling, the
+                # Logs Insights, recent API activity, traces, stack and resource status, scaling, the
                 # account alias and the enabled regions.
                 - Sid: InvestigationReads
                   Effect: Allow
@@ -302,8 +304,9 @@ Resources:
                     - account:ListRegions
                   Resource: '*'
           - !Ref 'AWS::NoValue'
+        # ReadScope=broad only: the reads ReadOnlyAccess lacks.
         - !If
-          - DenyConfigurationValues
+          - Curated
           - !Ref 'AWS::NoValue'
           - PolicyName: BetterStackAiSreBroadAccess
             PolicyDocument:
@@ -339,15 +342,17 @@ Resources:
                   Condition:
                     StringLike:
                       kms:ViaService:
-                        - lambda.*.amazonaws.com
                         - s3.*.amazonaws.com
                         - xray.*.amazonaws.com
                         - rds.*.amazonaws.com
                         - states.*.amazonaws.com
                         - glue.*.amazonaws.com
         - !If
-          - DenyConfigurationValues
-          # Every read Better Stack knows returns environment variables, user data or parameter values.
+          - Curated
+          # Configuration values readable with ReadScope=broad only: stack exports, EKS add-on configuration, EventBridge
+          # targets and subscribers, Firehose destinations and API Gateway stage variables. The reads that return Lambda
+          # environment variables, ECS container environments, user data, Batch job definitions, stack parameters and the
+          # resource properties that copy them are denied in both scopes, in AiSreDenyDataPolicy.
           - PolicyName: BetterStackAiSreDenyConfigurationValues
             PolicyDocument:
               Version: '2012-10-17'
@@ -355,40 +360,8 @@ Resources:
                 - Sid: DenyConfigurationValues
                   Effect: Deny
                   Action:
-                    - lambda:ListFunctions
-                    - lambda:ListVersionsByFunction
-                    - lambda:GetFunctionConfiguration
-                    - ecs:DescribeTaskDefinition
-                    - ecs:DescribeTasks
-                    - ecs:DescribeExpressGatewayService
-                    - ecs:DescribeDaemonTaskDefinition
-                    - batch:DescribeJobDefinitions
-                    - batch:DescribeJobs
-                    # A service job's request, such as a SageMaker training job's environment and hyperparameters.
-                    - batch:DescribeServiceJob
-                    - lambda:ListMicrovmImageVersions
-                    - ec2:DescribeInstanceAttribute
-                    - ec2:DescribeLaunchTemplateVersions
-                    - ec2:DescribeSpotFleetRequests
-                    - ec2:DescribeSpotInstanceRequests
-                    - autoscaling:DescribeLaunchConfigurations
-                    - cloudformation:DescribeStacks
-                    - cloudformation:DescribeChangeSet
-                    # A resource's Metadata (such as AWS::CloudFormation::Init), which NoEcho does not mask.
-                    - cloudformation:DescribeStackResource
-                    # Stack events carry each resource's properties, and exports carry output values.
-                    - cloudformation:DescribeStackEvents
-                    - cloudformation:DescribeEvents
+                    # Exports carry output values.
                     - cloudformation:ListExports
-                    # Drift results carry expected and actual property values, stack sets their parameters.
-                    - cloudformation:DescribeStackResourceDrifts
-                    - cloudformation:ListStackInstanceResourceDrifts
-                    - cloudformation:DescribeStackSet
-                    - cloudformation:DescribeStackInstance
-                    # Cloud Control lists every resource of a type with its full properties, and resource requests
-                    # carry the properties they set.
-                    - cloudformation:ListResources
-                    - cloudformation:ListResourceRequests
                     - eks:DescribeAddon
                     - events:ListTargetsByRule
                     # EventBridge subscribers carry the same target inputs and HTTP header values.
@@ -457,6 +430,63 @@ Resources:
               - xray:GetSamplingTargets
               # AWS publishes no response shape for it yet, so it is denied until AWS does.
               - securityhub:GetCSPMOrganizationsImportStatus
+            Resource: '*'
+          # The reads that return where customers keep secrets, denied in both scopes: Lambda environment variables,
+          # ECS task definitions and task overrides, EC2 and Auto Scaling user data, Batch job definitions and jobs,
+          # CloudFormation stack, change set and stack set parameters (and resource Metadata, which NoEcho doesn't mask),
+          # and every read that copies them: templates, stack events, drift results, Cloud Control and AWS Config.
+          - Sid: DenySecretBearingConfiguration
+            Effect: Deny
+            Action:
+              - lambda:GetFunctionConfiguration
+              - lambda:ListFunctions
+              - lambda:ListVersionsByFunction
+              - lambda:ListMicrovmImageVersions
+              - lambda:GetMicrovmImageVersion
+              - lambda:GetWebFunctionRevision
+              - ecs:DescribeTaskDefinition
+              - ecs:DescribeTasks
+              - ecs:DescribeExpressGatewayService
+              - ecs:DescribeDaemonTaskDefinition
+              - ec2:DescribeInstanceAttribute
+              - ec2:DescribeLaunchTemplateVersions
+              - ec2:DescribeSpotFleetRequests
+              - ec2:GetLaunchTemplateData
+              # Its response shape has a field for user data, though AWS returns none today.
+              - ec2:DescribeSpotInstanceRequests
+              - autoscaling:DescribeLaunchConfigurations
+              - batch:DescribeJobDefinitions
+              - batch:DescribeJobs
+              # A service job's request, such as a SageMaker training job's environment and hyperparameters.
+              - batch:DescribeServiceJob
+              - cloudformation:DescribeStacks
+              - cloudformation:DescribeChangeSet
+              - cloudformation:DescribeStackSet
+              - cloudformation:DescribeStackInstance
+              - cloudformation:DescribeStackResource
+              # Templates as written, with any literal Environment or UserData, and extensions' configuration.
+              - cloudformation:GetTemplate
+              - cloudformation:BatchDescribeTypeConfigurations
+              # Stack events and drift results carry each resource's full properties, which copy all of the above.
+              - cloudformation:DescribeStackEvents
+              - cloudformation:DescribeEvents
+              - cloudformation:DescribeStackResourceDrifts
+              - cloudformation:ListStackInstanceResourceDrifts
+              # Cloud Control returns resources' full properties, and resource requests the properties they set.
+              - cloudformation:GetResource
+              - cloudformation:ListResources
+              - cloudformation:GetGeneratedTemplate
+              - cloudformation:ListResourceRequests
+              - cloudformation:GetResourceRequestStatus
+              # AWS Config's recorded configuration items copy the same fields, such as ECS container environment
+              # values and stack parameter values.
+              - config:BatchGetResourceConfig
+              - config:BatchGetAggregateResourceConfig
+              - config:GetResourceConfigHistory
+              - config:GetAggregateResourceConfig
+              - config:SelectResourceConfig
+              - config:SelectAggregateResourceConfig
+              - config:GetResourceEvaluationSummary
             Resource: '*'
           # Objects stay unreadable, except the logs AWS services deliver under an AWSLogs/ key (load balancer
           # access logs, VPC Flow Logs, CloudTrail). Access point and Object Lambda ARNs never match, so they stay denied.
@@ -576,10 +606,10 @@ Resources:
               # A usage plan's keys carry the same values.
               - 'arn:aws:apigateway:*::/usageplans/*/keys'
               - 'arn:aws:apigateway:*::/usageplans/*/keys/*'
-          # kms:Decrypt only through the services AI SRE reads encrypted resources with. Lambda decrypts a
-          # function's environment as the caller, so without it no function's environment variables would be
-          # readable. In restricted mode only the CloudWatch Logs allow reaches a key, so the others stay unreadable
-          # there unless a key policy names the role.
+          # kms:Decrypt only through the services AI SRE reads encrypted resources with. Not through Lambda: the only
+          # Lambda reads that decrypt are of environment variables, which are denied above. With ReadScope=curated
+          # only the CloudWatch Logs allow reaches a key, so the others stay unreadable there unless a key policy
+          # names the role.
           - Sid: DenyKmsOutsideNamedServices
             Effect: Deny
             Action:
@@ -589,7 +619,6 @@ Resources:
               StringNotLike:
                 kms:ViaService:
                   - logs.*.amazonaws.com
-                  - lambda.*.amazonaws.com
                   - s3.*.amazonaws.com
                   - xray.*.amazonaws.com
                   - rds.*.amazonaws.com

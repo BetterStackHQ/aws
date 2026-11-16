@@ -80,7 +80,7 @@ class ReviewTest(unittest.TestCase):
         self.assertFails("FAIL alpha:GetThing is listed as denied, and no Deny statement of the template matches it", static=True)
 
     def test_a_configuration_deny_does_not_make_a_line_denied(self):
-        # beta:GetWidget is denied only with AllowConfigurationValues=false, so it isn't denied in both settings.
+        # beta:GetWidget is denied only with ReadScope=curated, so it isn't denied in both settings.
         self.write_review(self.read_review().replace("beta:GetWidget\tconfiguration-value", "beta:GetWidget\tdenied"))
         self.assertFails("FAIL beta:GetWidget is listed as denied", static=True)
 
@@ -126,12 +126,12 @@ class ReviewTest(unittest.TestCase):
         with open(self.path("template.yaml"), "w", encoding="utf-8") as f:
             f.write(text.replace("                    - beta:GetWidget\n", "                    - beta:DescribeWidget\n"))
         self.assertFails(
-            "FAIL beta:GetWidget is a configuration value, and AllowConfigurationValues=false grants it without denying it",
+            "FAIL beta:GetWidget is a configuration value, and ReadScope=curated grants it without denying it",
             static=True,
         )
 
     def test_a_configuration_value_not_granted_with_false_passes(self):
-        # alpha:DescribeThing comes only from ReadOnlyAccess, which the role doesn't have with false.
+        # alpha:DescribeThing comes only from ReadOnlyAccess, which the role doesn't have with curated.
         self.write_review(self.read_review().replace("alpha:DescribeThing\tallowed", "alpha:DescribeThing\tconfiguration-value"))
         code, out = self.run_check(static=True)
         self.assertEqual(code, 0, out)
@@ -166,7 +166,8 @@ class ReviewTest(unittest.TestCase):
         patterns = review.deny_patterns(review.check_contract.DEFAULT_TEMPLATE)
         self.assertIn("secretsmanager:GetSecretValue", patterns)
         self.assertIn("s3:GetObject*", patterns)
-        self.assertNotIn("lambda:ListFunctions", patterns, "the configuration deny applies in one setting only")
+        self.assertIn("lambda:GetFunctionConfiguration", patterns, "secret-bearing configuration is denied in both scopes")
+        self.assertNotIn("events:ListTargetsByRule", patterns, "the configuration deny applies with curated only")
 
 
 if __name__ == "__main__":

@@ -2,17 +2,17 @@ AWSTemplateFormatVersion: '2010-09-09'
 Parameters:
   ExternalId:
     Type: String
-  AllowConfigurationValues:
+  ReadScope:
     Type: String
-    Default: 'true'
+    Default: curated
 Conditions:
-  DenyConfigurationValues: !Equals [!Ref AllowConfigurationValues, 'false']
+  Curated: !Equals [!Ref ReadScope, 'curated']
 Resources:
   AiSreRole:
     Type: AWS::IAM::Role
     Properties:
       ManagedPolicyArns: !If
-        - DenyConfigurationValues
+        - Curated
         - !Ref 'AWS::NoValue'
         - - !Sub 'arn:${AWS::Partition}:iam::aws:policy/ReadOnlyAccess'
       Policies:
@@ -34,7 +34,7 @@ Resources:
                   - alpha:GetSecret*
                 Resource: '*'
         - !If
-          - DenyConfigurationValues
+          - Curated
           - PolicyName: DenyConfigurationValues
             PolicyDocument:
               Version: '2012-10-17'

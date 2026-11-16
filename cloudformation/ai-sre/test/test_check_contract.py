@@ -89,8 +89,8 @@ class ContractTest(unittest.TestCase):
 
     def test_a_renamed_parameter_fails(self):
         self.assertFails(
-            TEMPLATE.replace("AllowConfigurationValues", "AllowConfigValues"),
-            "parameter AllowConfigurationValues was removed or renamed",
+            TEMPLATE.replace("ReadScope", "ReadMode"),
+            "parameter ReadScope was removed or renamed",
         )
 
     def test_a_new_parameter_without_a_default_fails(self):
@@ -206,7 +206,7 @@ class ContractTest(unittest.TestCase):
         self.assertFails(
             replace(
                 "\n        - !Ref AiSreDenyStoredDataPolicy\n",
-                "\n        - !If [DenyConfigurationValues, !Ref AiSreDenyStoredDataPolicy, !Ref 'AWS::NoValue']\n",
+                "\n        - !If [Curated, !Ref AiSreDenyStoredDataPolicy, !Ref 'AWS::NoValue']\n",
             ),
             "AiSreDenyStoredDataPolicy is not attached to the role in both settings",
         )
