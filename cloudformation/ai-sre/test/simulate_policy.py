@@ -43,9 +43,9 @@ def both(decision):
     return decision, decision
 
 
-CONFIG = (ALLOW, DENY)  # readable by default, denied with AllowConfigurationValues=false
+CONFIG = (ALLOW, DENY)  # readable with AllowConfigurationValues=true, denied with false, the default
 BROAD = (ALLOW, NONE)  # granted by ReadOnlyAccess or BetterStackAiSreBroadAccess, so only with true
-# kms:ViaService values the default setting may decrypt through, besides CloudWatch Logs (allowed in both).
+# kms:ViaService values the true setting may decrypt through, besides CloudWatch Logs (allowed in both).
 KMS_BROAD_SERVICES = ["lambda", "s3", "xray", "rds", "states", "glue"]
 
 # (action, resource, context, decision with true, decision with false)
@@ -225,7 +225,7 @@ CHECKS = [
         "codecommit:GitPull", "codecommit:GetFile", "codecommit:GetFolder", "codecommit:GetBlob",
         "codeartifact:ReadFromRepository", "codeartifact:GetPackageVersionAsset",
     ]],
-    # Configuration values: readable by default, denied with AllowConfigurationValues=false.
+    # Configuration values: readable with AllowConfigurationValues=true, denied with false, the default.
     ("lambda:ListFunctions", ANY, (), *CONFIG),
     ("lambda:ListVersionsByFunction", ANY, (), *CONFIG),
     ("lambda:GetFunctionConfiguration", ANY, (), *CONFIG),
@@ -267,7 +267,7 @@ CHECKS = [
     ("apigateway:GET", apigw("/restapis/abc123/stages/prod"), (), *CONFIG),
     ("apigateway:GET", apigw("/apis/abc123/stages"), (), *CONFIG),
     ("apigateway:GET", apigw("/apis/abc123/stages/prod"), (), *CONFIG),
-    # Reviewed in read-only-access-review.tsv: more credentials and tokens other services hand out.
+    # More credentials and tokens other services hand out.
     *[(action, ANY, (), *both(DENY)) for action in [
         "amplify:GetApp", "amplify:GetBranch", "amplify:ListApps", "amplify:ListBranches",
         "athena:GetSessionEndpoint", "chime:GetAttendee", "chime:GetBot", "chime:ListAttendees", "chime:ListBots",
@@ -282,7 +282,7 @@ CHECKS = [
         "s3:GetDataAccess", "snowball:GetJobManifest", "snowball:GetJobUnlockCode", "sns:GetEndpointAttributes",
         "sns:ListEndpointsByPlatformApplication", "workspaces-web:GetIdentityProvider",
     ]],
-    # Reviewed in read-only-access-review.tsv: more stored content, workflow payloads, end users and code.
+    # More stored content, workflow payloads, end users and code.
     *[(action, ANY, (), *both(DENY)) for action in [
         "aidevops:ListJournalRecords", "aidevops:ListPendingMessages", "bedrock:GetInvocationStep",
         "bedrock:ListFlowExecutionEvents", "clouddirectory:BatchRead", "clouddirectory:GetLinkAttributes",
@@ -314,7 +314,7 @@ CHECKS = [
         "ses:GetAddressListImportJob", "ses:ListAddressListImportJobs", "ses:GetExportJob",
         "cognito-sync:QueryRecords", "bedrock-mantle:GetInference", "ec2messages:GetMessages",
     ]],
-    # Reviewed in read-only-access-review.tsv, second round.
+    # More of both, from a second review of ReadOnlyAccess.
     *[(action, ANY, (), *both(DENY)) for action in [
         "codecommit:GetComment", "codecommit:GetCommentsForComparedCommit", "codecommit:GetCommentsForPullRequest",
         "connect:ListContactReferences", "ec2:DescribeIpamExternalResourceVerificationTokens",
@@ -322,6 +322,15 @@ CHECKS = [
         "kms:GetParametersForImport", "lightsail:GetRelationalDatabase", "lightsail:GetRelationalDatabases",
         "medialive:DescribeInputDeviceThumbnail", "rds:DescribeTenantDatabases", "dms:DescribeEndpoints",
         "ds:DescribeDirectories",
+    ]],
+    # Added to ReadOnlyAccess in v192: a sign-in code, Claude Platform on AWS
+    # bearer token calls and credential vaults, and stored content.
+    *[(action, ANY, (), *both(DENY)) for action in [
+        "cloudwatch:CreateOneTimeDeepLinkCode", "aws-external-anthropic:CallWithBearerToken",
+        "aws-external-anthropic:GetVault", "aidevops:GetAssetContent", "aidevops:GetAssetFile",
+        "aws-external-anthropic:GetFile", "aws-external-anthropic:GetMemoryStore", "aws-external-anthropic:GetSession",
+        "aws-external-anthropic:GetBatchInference", "agentaccess-mcp:GetScreenshot",
+        "bedrock-agentcore:ListDatasetExamples",
     ]],
     # Content like logs, readable with true only: whatever was pasted into a Support case, and command output.
     *[(action, ANY, (), *BROAD) for action in [

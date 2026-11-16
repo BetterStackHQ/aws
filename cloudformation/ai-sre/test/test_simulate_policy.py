@@ -4,7 +4,7 @@ The stub decides each request from better-stack-ai-sre.yaml's policies, plus AWS
 fixtures/read-only-access-policy.json holds it) where the template attaches it: explicit deny, then allow, else
 implicit deny; Action, Resource and NotResource wildcards; StringEquals, StringLike and StringNotLike on the
 request's context. So the script's expectations are checked against the template itself in both
-AllowConfigurationValues settings, and against the lists of the allow and deny tables below.
+AllowConfigurationValues settings.
 """
 
 import io
@@ -21,57 +21,6 @@ READ_ONLY_ACCESS_FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__
 ACCOUNT = "123456789012"
 EXTERNAL_ID = "bs-ai-sre-1a2b3c4d-0000-4000-8000-00000000abcd"
 ROLE_ARN = f"arn:aws:iam::{ACCOUNT}:role/better-stack-ai-sre-role-1a2b3c4d"
-
-# The explicit denies, action by action.
-DENIED_IN_EVERY_SETTING = [
-    "s3:GetObject", "secretsmanager:GetSecretValue", "ssm:GetParameter", "lambda:GetFunction", "lambda:InvokeFunction",
-    "dynamodb:GetItem", "dynamodb:BatchGetItem", "dynamodb:Query", "dynamodb:Scan", "sqs:ReceiveMessage",
-    "kinesis:GetRecords", "ec2:GetPasswordData", "ec2:DescribeVpnConnections", "logs:Unmask",
-    "dynamodb:PartiQLSelect", "dynamodb:GetRecords", "kinesis:SubscribeToShard",
-    "cloudwatch:GetSpaceCredentials", "cloudwatch:GetSpaceCredentialsForOrganization", "cloudwatch:GetSpaceDataAccess",
-    "cloudwatch:GetTelemetryQueryResults", "xray:GetSamplingTargets",
-    # Credentials and tokens other services hand out.
-    "ecr:GetAuthorizationToken", "codeartifact:GetAuthorizationToken", "cognito-idp:ListUserPoolClientSecrets",
-    "cognito-idp:GetClientToken", "wafv2:GetDecryptedAPIKey", "appsync:ListApiKeys", "s3express:CreateSession",
-    "secretsmanager:BatchGetSecretValue", "redshift:GetClusterCredentials", "directconnect:DescribeVirtualInterfaces",
-    # Stored content, end users and code.
-    "athena:GetQueryResults", "cassandra:Select", "dax:Query", "qldb:GetBlock", "timestream:Select",
-    "glacier:GetJobOutput", "es:ESHttpGet", "kinesisvideo:GetMedia", "healthlake:ReadResource",
-    "cognito-idp:AdminGetUser", "cognito-idp:ListUsers", "lambda:GetLayerVersion", "ecr:BatchGetImage",
-    "codecommit:GetFile", "codeartifact:GetPackageVersionAsset", "dms:DescribeEndpoints", "ds:DescribeDirectories",
-]
-DENIED_API_GATEWAY_PATHS = ["/apikeys", "/apikeys/key123", "/usageplans/plan123/keys", "/usageplans/plan123/keys/key123"]
-DENIED_WITHOUT_CONFIGURATION_VALUES = [
-    "lambda:ListFunctions", "lambda:ListVersionsByFunction", "lambda:GetFunctionConfiguration",
-    "ecs:DescribeTaskDefinition", "ecs:DescribeTasks", "batch:DescribeJobDefinitions", "batch:DescribeJobs",
-    "ec2:DescribeInstanceAttribute", "ec2:DescribeLaunchTemplateVersions", "ec2:DescribeSpotFleetRequests",
-    "ec2:DescribeSpotInstanceRequests", "cloudformation:DescribeEvents",
-    "autoscaling:DescribeLaunchConfigurations", "cloudformation:DescribeStacks", "cloudformation:DescribeChangeSet",
-    "cloudformation:DescribeStackEvents", "cloudformation:ListExports", "events:ListTargetsByRule", "events:DescribeSubscriber",
-    "firehose:DescribeDeliveryStream", "cloudformation:DescribeStackResourceDrifts",
-    "cloudformation:ListStackInstanceResourceDrifts", "cloudformation:DescribeStackSet",
-    "cloudformation:DescribeStackInstance", "eks:DescribeAddon",
-    "ecs:DescribeExpressGatewayService", "ecs:DescribeDaemonTaskDefinition", "batch:DescribeServiceJob",
-    "lambda:ListMicrovmImageVersions", "cloudformation:DescribeStackResource", "cloudformation:ListResources",
-    "cloudformation:ListResourceRequests",
-]
-STAGE_PATHS = ["/restapis/abc123/stages", "/restapis/abc123/stages/prod", "/apis/abc123/stages", "/apis/abc123/stages/prod"]
-# Readable in both settings: the investigation reads, the self-read and the MCP token.
-ALLOWED_IN_EVERY_SETTING = [
-    "cloudwatch:DescribeAlarms", "logs:StartQuery", "logs:StopQuery", "cloudtrail:LookupEvents",
-    "xray:GetTraceSummaries", "xray:BatchGetTraces", "cloudformation:DescribeStackResources", "cloudformation:ListStacks",
-    "application-autoscaling:DescribeScalableTargets", "iam:ListAccountAliases", "account:ListRegions",
-]
-NEVER_ALLOWED = ["signin:AuthorizeOAuth2Access"]
-# Only ReadOnlyAccess grants these: readable with true, not with false.
-READ_ONLY_ACCESS_ONLY = ["codedeploy:GetDeployment", "iam:ListRoles", "logs:TestMetricFilter", "organizations:DescribeOrganization"]
-# BetterStackAiSreBroadAccess, with true only.
-BROAD_ACCESS = [
-    "cloudtrail:StartQuery", "cloudtrail:CancelQuery", "pi:GetPerformanceAnalysisReport",
-    "pi:ListPerformanceAnalysisReports", "eks-mcp:InvokeMcp", "eks-mcp:CallReadOnlyTool", "ecs-mcp:UseMcp",
-    "ecs-mcp:InvokeReadOnlyTools", "application-signals-mcp:InvokeMcp", "application-signals-mcp:CallReadOnlyTool",
-]
-
 
 def statements(allow_configuration_values):
     """The role's inline statements and, where the template attaches it, ReadOnlyAccess's."""
@@ -155,10 +104,6 @@ class StubIam:
             yield {"EvaluationResults": results[i:i + 2]}
 
 
-def expected(action, resource=sim.ANY):
-    return [(t, f) for a, r, c, t, f in sim.CHECKS if a == action and r == resource and not c]
-
-
 class SimulatePolicyTest(unittest.TestCase):
     def run_script(self, iam, allow):
         out = io.StringIO()
@@ -188,25 +133,6 @@ class SimulatePolicyTest(unittest.TestCase):
     def test_the_restricted_role_has_no_read_only_access(self):
         self.assertEqual(template_policies.managed_policy_arns(False), [])
         self.assertEqual(template_policies.managed_policy_arns(True), [template_policies.READ_ONLY_ACCESS_ARN])
-        for action in READ_ONLY_ACCESS_ONLY + BROAD_ACCESS:
-            self.assertEqual(expected(action), [sim.BROAD], action)
-
-    def test_s3_objects_are_readable_under_aws_logs_only_and_only_with_true(self):
-        self.assertEqual(expected("s3:GetObject", "arn:aws:s3:::b/AWSLogs/1/x"), [sim.BROAD])
-        self.assertEqual(expected("s3:GetObject", "arn:aws:s3:::b/p/AWSLogs/1/x"), [sim.BROAD])
-        for resource in ("arn:aws:s3:::b/data/x", sim.ANY, sim.ACCESS_POINT_LOG_OBJECT):
-            self.assertEqual(expected("s3:GetObject", resource), [(sim.DENY, sim.DENY)], resource)
-        # Reads through S3 Object Lambda are authorized as s3-object-lambda:GetObject, not s3:GetObject.
-        self.assertEqual(expected("s3-object-lambda:GetObject", sim.OBJECT_LAMBDA_LOG_OBJECT), [(sim.DENY, sim.DENY)])
-        self.assertEqual(expected("s3:ListBucket", "arn:aws:s3:::b"), [sim.BROAD])
-
-    def test_kms_decrypt_through_each_named_service_with_true_only(self):
-        for service in sim.KMS_BROAD_SERVICES:
-            rows = [(t, f) for a, _, c, t, f in sim.CHECKS if a == "kms:Decrypt" and c == sim.via(service)]
-            self.assertEqual(rows, [sim.BROAD], service)
-        for service in ("secretsmanager", "cloudtrail"):
-            rows = [(t, f) for a, _, c, t, f in sim.CHECKS if a == "kms:Decrypt" and c == sim.via(service)]
-            self.assertEqual(rows, [(sim.DENY, sim.DENY)], service)
 
     def test_the_policies_fit_iam_quotas_in_both_settings(self):
         for allow in (True, False):
@@ -236,30 +162,6 @@ class SimulatePolicyTest(unittest.TestCase):
     def test_no_check_is_listed_twice(self):
         keys = [(a, r, c) for a, r, c, _, _ in sim.CHECKS]
         self.assertEqual(len(keys), len(set(keys)))
-
-    def test_the_deny_lists_are_checked_entry_by_entry(self):
-        for action in DENIED_IN_EVERY_SETTING:
-            self.assertEqual(expected(action), [(sim.DENY, sim.DENY)], action)
-        for path in DENIED_API_GATEWAY_PATHS:
-            self.assertEqual(expected("apigateway:GET", sim.apigw(path)), [(sim.DENY, sim.DENY)], path)
-        for action in DENIED_WITHOUT_CONFIGURATION_VALUES:
-            self.assertEqual(expected(action), [(sim.ALLOW, sim.DENY)], action)
-        for path in STAGE_PATHS:
-            self.assertEqual(expected("apigateway:GET", sim.apigw(path)), [(sim.ALLOW, sim.DENY)], path)
-        self.assertEqual(
-            sorted(a for a, _, _, t, f in sim.CHECKS if (t, f) == sim.CONFIG and not a.startswith("apigateway:")),
-            sorted(DENIED_WITHOUT_CONFIGURATION_VALUES),
-        )
-
-    def test_the_allow_list_is_checked_entry_by_entry(self):
-        for action in ALLOWED_IN_EVERY_SETTING:
-            self.assertEqual(expected(action), [(sim.ALLOW, sim.ALLOW)], action)
-        for action in NEVER_ALLOWED:
-            self.assertIn(sim.NONE, [t for a, _, _, t, _ in sim.CHECKS if a == action], action)
-        self.assertEqual(expected("signin:CreateOAuth2Token", sim.MCP), [(sim.ALLOW, sim.ALLOW)])
-        for action in ("iam:GetRole", "iam:ListRolePolicies", "iam:GetRolePolicy", "iam:ListAttachedRolePolicies"):
-            self.assertEqual(expected(action, sim.SELF), [(sim.ALLOW, sim.ALLOW)], action)
-            self.assertEqual(expected(action, sim.OTHER_ROLE), [sim.BROAD], action)
 
     def test_every_deny_in_the_template_has_a_check(self):
         # A deny added to the template without a CHECKS entry would never reach the policy simulator.

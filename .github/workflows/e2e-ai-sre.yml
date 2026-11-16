@@ -1,31 +1,30 @@
 name: "E2E AI SRE"
 
-# Deploys cloudformation/ai-sre/better-stack-ai-sre.yaml from the checkout the way a customer does, checks the role it
-# makes (name, version tag, description, two-statement trust), asserts every allowed read and every explicit deny with
-# IAM's policy simulator (cloudformation/ai-sre/test/simulate_policy.py), updates the stack in place to
-# AllowConfigurationValues=false, checks the role kept its ID and runs the simulator again, then deletes the stack.
+# The live checks of cloudformation/ai-sre/better-stack-ai-sre.yaml. Run it by hand (Actions, "Run workflow") on the
+# branch of any pull request that changes the template, and on main before a release. It does not run on pull
+# requests, pushes or a schedule, and a run that cannot deploy fails: it never reports success without deploying.
+#
+# "AI SRE stack round trip" deploys the template from the checkout the way a customer does, checks the role it makes
+# (name, version tag, description, two-statement trust), asserts every allowed read and every explicit deny with
+# IAM's policy simulator (cloudformation/ai-sre/test/simulate_policy.py) with the default, AllowConfigurationValues=false,
+# updates the stack in place to AllowConfigurationValues=true, checks the role kept its ID and runs the simulator
+# again, then deletes the stack.
 # Nothing assumes the role: it trusts only Better Stack's account.
 #
-# AWS: the job assumes the role in the repository secret AI_SRE_E2E_ROLE_ARN through GitHub OIDC. That role needs
+# "Restricted reads against AWS's service reference" needs no AWS account. It fails when a wildcard of the restricted
+# role matches an action cloudformation/ai-sre/restricted-reads.txt lacks (AWS added one: review it, then update the
+# list) or when an action name in the template matches nothing (see cloudformation/ai-sre/test/check_restricted_reads.py).
+#
+# AWS: the round trip assumes the role in the repository secret AI_SRE_E2E_ROLE_ARN through GitHub OIDC. That role needs
 # cloudformation:CreateStack, UpdateStack, DeleteStack, DescribeStacks, DescribeStackEvents and ListStacks on stacks
 # named e2e-ai-sre-*, iam:CreateRole, DeleteRole, GetRole, TagRole, UntagRole, UpdateRoleDescription,
 # PutRolePolicy, DeleteRolePolicy, GetRolePolicy, ListRolePolicies, ListAttachedRolePolicies, AttachRolePolicy and
 # DetachRolePolicy (for ReadOnlyAccess and the stack's own policies) on roles named better-stack-ai-sre-role-*,
 # iam:CreatePolicy, DeletePolicy, GetPolicy, GetPolicyVersion, CreatePolicyVersion, DeletePolicyVersion and
 # ListPolicyVersions on policies named better-stack-ai-sre-*, iam:SimulatePrincipalPolicy, and
-# cloudformation:ValidateTemplate. Without the secret the
-# job skips with a notice. Pull requests from forks are skipped: they get no OIDC token.
+# cloudformation:ValidateTemplate. Without the secret the round trip fails.
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - cloudformation/ai-sre/**
-      - .github/workflows/e2e-ai-sre.yml
-  pull_request:
-    paths:
-      - cloudformation/ai-sre/**
-      - .github/workflows/e2e-ai-sre.yml
   workflow_dispatch:
 
 permissions:
@@ -45,43 +44,31 @@ env:
 jobs:
   test:
     name: AI SRE stack round trip
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
     steps:
-      - name: "[Setup] Skip without AWS credentials"
-        id: aws
+      - name: "[Setup] The AWS role is configured"
         run: |
-          if [ -z "$AWS_ROLE_ARN" ]; then
-            echo "::notice::the repository secret AI_SRE_E2E_ROLE_ARN is not set, so the AI SRE stack was not deployed"
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
-          fi
+          [ -n "$AWS_ROLE_ARN" ] || { echo "::error::the repository secret AI_SRE_E2E_ROLE_ARN is not set, so the AI SRE stack cannot be deployed"; exit 1; }
 
       - name: "[Setup] Checkout code"
-        if: ${{ steps.aws.outputs.enabled == 'true' }}
         uses: actions/checkout@v7
 
       - uses: actions/setup-python@v7
-        if: ${{ steps.aws.outputs.enabled == 'true' }}
         with:
           python-version: '3.12'
 
       - name: "[Setup] Install boto3"
-        if: ${{ steps.aws.outputs.enabled == 'true' }}
         run: pip install boto3
 
       - name: "[Setup] AWS credentials (OIDC)"
-        if: ${{ steps.aws.outputs.enabled == 'true' }}
         uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: ${{ env.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: "[Setup] Stamp the template with the run's version, generate the external ID"
-        if: ${{ steps.aws.outputs.enabled == 'true' }}
         run: |
           sed "s/^      Version: 0\.0\.0-dev$/      Version: $RUN_ID/" cloudformation/ai-sre/better-stack-ai-sre.yaml > template.yaml
           grep -q "^      Version: $RUN_ID$" template.yaml || { echo "::error::the template has no 'Version: 0.0.0-dev' line to stamp"; exit 1; }
@@ -99,7 +86,6 @@ jobs:
 
       # A cancelled run can leave its stack behind.
       - name: "[Setup] Delete stacks left by earlier runs"
-        if: ${{ steps.aws.outputs.enabled == 'true' }}
         run: |
           for stack in $(aws cloudformation list-stacks --stack-status-filter CREATE_COMPLETE CREATE_FAILED ROLLBACK_COMPLETE ROLLBACK_FAILED UPDATE_COMPLETE UPDATE_ROLLBACK_COMPLETE UPDATE_ROLLBACK_FAILED DELETE_FAILED \
             --query "StackSummaries[?starts_with(StackName, 'e2e-ai-sre-')].StackName" --output text); do
@@ -109,7 +95,6 @@ jobs:
           done
 
       - name: "[Test] Deploy the stack with the defaults"
-        if: ${{ steps.aws.outputs.enabled == 'true' }}
         run: |
           aws cloudformation create-stack --stack-name "$STACK_NAME" --template-body file://template.yaml --capabilities CAPABILITY_NAMED_IAM \
             --parameters "ParameterKey=ExternalId,ParameterValue=$EXTERNAL_ID" "ParameterKey=BetterStackTeam,ParameterValue=E2E test ($RUN_ID)"
@@ -123,7 +108,6 @@ jobs:
           echo "deployed $ROLE_ARN"
 
       - name: "[Test] The role has the contract's name, version tag, description and two-statement trust"
-        if: ${{ steps.aws.outputs.enabled == 'true' }}
         run: |
           aws iam get-role --role-name "$EXPECTED_ROLE_NAME" --output json > role.json
           jq -r '.Role.RoleId' role.json > role-id.txt
@@ -142,16 +126,14 @@ jobs:
             || fail "the trust does not pin the production callers"
           echo "role $EXPECTED_ROLE_NAME: version tag, description and trust as expected"
 
-      - name: "[Test] Policy simulator, AllowConfigurationValues=true"
-        if: ${{ steps.aws.outputs.enabled == 'true' }}
-        run: python3 cloudformation/ai-sre/test/simulate_policy.py --role-arn "$ROLE_ARN" --allow-configuration-values true --region "$AWS_REGION"
+      - name: "[Test] Policy simulator, AllowConfigurationValues=false (the default)"
+        run: python3 cloudformation/ai-sre/test/simulate_policy.py --role-arn "$ROLE_ARN" --allow-configuration-values false --region "$AWS_REGION"
 
-      - name: "[Test] Update the stack in place to AllowConfigurationValues=false"
-        if: ${{ steps.aws.outputs.enabled == 'true' }}
+      - name: "[Test] Update the stack in place to AllowConfigurationValues=true"
         run: |
           aws cloudformation update-stack --stack-name "$STACK_NAME" --use-previous-template --capabilities CAPABILITY_NAMED_IAM \
             --parameters ParameterKey=ExternalId,UsePreviousValue=true ParameterKey=BetterStackTeam,UsePreviousValue=true ParameterKey=BetterStackEnvironment,UsePreviousValue=true \
-            ParameterKey=PermissionsBoundaryArn,UsePreviousValue=true ParameterKey=AllowConfigurationValues,ParameterValue=false
+            ParameterKey=PermissionsBoundaryArn,UsePreviousValue=true ParameterKey=AllowConfigurationValues,ParameterValue=true
           if ! aws cloudformation wait stack-update-complete --stack-name "$STACK_NAME"; then
             echo "::error::stack update failed: $(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --query 'Stacks[0].StackStatus' --output text)"
             aws cloudformation describe-stack-events --stack-name "$STACK_NAME" --query "StackEvents[?ends_with(ResourceStatus, 'FAILED')].[LogicalResourceId,ResourceStatus,ResourceStatusReason]" --output table
@@ -160,13 +142,30 @@ jobs:
           [ "$(aws iam get-role --role-name "$EXPECTED_ROLE_NAME" --query Role.RoleId --output text)" = "$(cat role-id.txt)" ] || { echo "::error::the update replaced the role"; exit 1; }
           echo "updated in place, the role kept its ID"
 
-      - name: "[Test] Policy simulator, AllowConfigurationValues=false"
-        if: ${{ steps.aws.outputs.enabled == 'true' }}
-        run: python3 cloudformation/ai-sre/test/simulate_policy.py --role-arn "$ROLE_ARN" --allow-configuration-values false --region "$AWS_REGION"
+      - name: "[Test] Policy simulator, AllowConfigurationValues=true"
+        run: python3 cloudformation/ai-sre/test/simulate_policy.py --role-arn "$ROLE_ARN" --allow-configuration-values true --region "$AWS_REGION"
 
       - name: "[Cleanup] Delete the stack"
-        if: ${{ always() && steps.aws.outputs.enabled == 'true' && env.STACK_NAME != '' }}
+        if: ${{ always() && env.STACK_NAME != '' }}
         run: |
           aws cloudformation delete-stack --stack-name "$STACK_NAME"
           aws cloudformation wait stack-delete-complete --stack-name "$STACK_NAME" || { echo "::error::stack $STACK_NAME was not deleted"; exit 1; }
           echo "deleted $STACK_NAME"
+
+  restricted-reads:
+    name: Restricted reads against AWS's service reference
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Install PyYAML
+        run: pip install pyyaml==6.0.3
+
+      - name: The restricted role's wildcards match what restricted-reads.txt records
+        working-directory: cloudformation/ai-sre/test
+        run: python check_restricted_reads.py

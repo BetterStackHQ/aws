@@ -4,7 +4,7 @@ Parameters:
     Type: String
   AllowConfigurationValues:
     Type: String
-    Default: 'true'
+    Default: 'false'
 Conditions:
   DenyConfigurationValues: !Equals [!Ref AllowConfigurationValues, 'false']
 Resources:
