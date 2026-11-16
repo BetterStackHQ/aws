@@ -1,5 +1,5 @@
-# ReadOnlyAccess v191
-# service reference read 2026-11-12
+# ReadOnlyAccess v192
+# service reference read 2026-11-16
 a4b:GetAddressBook	allowed
 a4b:GetConferencePreference	allowed
 a4b:GetConferenceProvider	allowed
@@ -31,11 +31,15 @@ a4b:SearchProfiles	allowed
 a4b:SearchRooms	allowed
 a4b:SearchSkillGroups	allowed
 a4b:SearchUsers	allowed
+access-analyzer:CheckAccessNotGranted	allowed
+access-analyzer:CheckNoNewAccess	allowed
+access-analyzer:CheckNoPublicAccess	allowed
 access-analyzer:GetAccessPreview	allowed
 access-analyzer:GetAnalyzedResource	allowed
 access-analyzer:GetAnalyzer	allowed
 access-analyzer:GetArchiveRule	allowed
 access-analyzer:GetFinding	allowed
+access-analyzer:GetFindingRecommendation	allowed
 access-analyzer:GetFindingsStatistics	allowed
 access-analyzer:GetGeneratedPolicy	allowed
 access-analyzer:ListAccessPreviewFindings	allowed
@@ -47,11 +51,17 @@ access-analyzer:ListFindings	allowed
 access-analyzer:ListPolicyGenerations	allowed
 access-analyzer:ListTagsForResource	allowed
 access-analyzer:ValidatePolicy	allowed
+account-access:GetApplication	allowed
+account-access:GetEntitlement	allowed
+account-access:ListApplications	allowed
+account-access:ListEntitlements	allowed
+account-access:ListTagsForResource	allowed
 account:GetAccountInformation	allowed
 account:GetAlternateContact	allowed
 account:GetContactInformation	allowed
 account:GetGovCloudAccountInformation	allowed
 account:GetPrimaryEmail	allowed
+account:GetPrimaryEmailUpdateStatus	allowed
 account:GetRegionOptStatus	allowed
 account:ListRegions	allowed
 acm-pca:DescribeCertificateAuthority	allowed
@@ -84,23 +94,36 @@ action-recommendations:ListRecommendedActions	allowed
 agent-registry:GetDiscoverableRegistryRecord	allowed
 agent-registry:GetRegistry	allowed
 agent-registry:GetRegistryRecord	allowed
+agent-registry:GetResourcePolicy	allowed
 agent-registry:InvokeRegistryMcp	allowed
 agent-registry:ListDiscoverableRegistryRecords	allowed
 agent-registry:ListRegistries	allowed
 agent-registry:ListRegistryRecords	allowed
 agent-registry:ListTagsForResource	allowed
 agent-registry:SearchDiscoverableRegistryRecords	allowed
+agentaccess-mcp:CheckConnectionStatus	allowed
+agentaccess-mcp:GetScreenshot	denied	a user's screen
 aidevops:DescribePrivateConnection	allowed
 aidevops:DescribeServices	allowed
+aidevops:DescribeSupportLevel	allowed
+aidevops:DiscoverTopology	allowed
 aidevops:GetAccountUsage	allowed
 aidevops:GetAgentSpace	allowed
+aidevops:GetAsset	allowed
+aidevops:GetAssetContent	denied	asset content
+aidevops:GetAssetFile	denied	asset file content
 aidevops:GetAssociation	allowed
 aidevops:GetBacklogTask	allowed
 aidevops:GetKnowledgeItem	allowed
 aidevops:GetOperatorApp	allowed
 aidevops:GetRecommendation	allowed
 aidevops:GetService	allowed
+aidevops:GetTrigger	allowed
 aidevops:ListAgentSpaces	allowed
+aidevops:ListAssetFiles	allowed
+aidevops:ListAssets	allowed
+aidevops:ListAssetTypes	allowed
+aidevops:ListAssetVersions	allowed
 aidevops:ListAssociations	allowed
 aidevops:ListBacklogTasks	allowed
 aidevops:ListChats	allowed
@@ -114,6 +137,7 @@ aidevops:ListPrivateConnections	allowed
 aidevops:ListRecommendations	allowed
 aidevops:ListServices	allowed
 aidevops:ListTagsForResource	allowed
+aidevops:ListTriggers	allowed
 aidevops:ListWebhooks	allowed
 aidevops:SearchServiceAccessibleResource	allowed
 aiops:GetEphemeralInvestigationResults	allowed
@@ -122,13 +146,25 @@ aiops:GetFactVersions	allowed
 aiops:GetInvestigation	allowed
 aiops:GetInvestigationEvent	allowed
 aiops:GetInvestigationGroup	allowed
+aiops:GetInvestigationGroupPolicy	allowed
 aiops:GetInvestigationResource	allowed
 aiops:GetReport	allowed
 aiops:ListFacts	allowed
 aiops:ListInvestigationEvents	allowed
 aiops:ListInvestigationGroups	allowed
 aiops:ListInvestigations	allowed
+aiops:ListReports	allowed
+aiops:ListTagsForResource	allowed
 aiops:ValidateInvestigationGroup	allowed
+airflow-serverless:GetTaskInstance	configuration-value	task XCom values
+airflow-serverless:GetWorkflow	configuration-value	workflow environment variables
+airflow-serverless:GetWorkflowRun	configuration-value	run override parameters
+airflow-serverless:ListTagsForResource	allowed
+airflow-serverless:ListTaskInstances	allowed
+airflow-serverless:ListWorkflowRuns	allowed
+airflow-serverless:ListWorkflows	allowed
+airflow-serverless:ListWorkflowVersions	allowed
+airflow:GetEnvironment	configuration-value	Airflow configuration options
 airflow:ListEnvironments	allowed
 airflow:ListTagsForResource	allowed
 amplify:GetApp	denied
@@ -244,6 +280,12 @@ application-signals:ListServiceOperations	allowed
 application-signals:ListServices	allowed
 application-signals:ListServiceStates	allowed
 application-signals:ListTagsForResource	allowed
+application-transformation:GetContainerization	allowed
+application-transformation:GetDeployment	allowed
+application-transformation:GetGroupingAssessment	allowed
+application-transformation:GetPortingCompatibilityAssessment	allowed
+application-transformation:GetPortingRecommendationAssessment	allowed
+application-transformation:GetRuntimeAssessment	allowed
 applicationinsights:DescribeApplication	allowed
 applicationinsights:DescribeComponent	allowed
 applicationinsights:DescribeComponentConfiguration	allowed
@@ -513,6 +555,35 @@ autoscaling:DescribeTerminationPolicyTypes	allowed
 autoscaling:DescribeTrafficSources	allowed
 autoscaling:DescribeWarmPool	allowed
 autoscaling:GetPredictiveScalingForecast	allowed
+aws-external-anthropic:CallWithBearerToken	denied	calls with a bearer token
+aws-external-anthropic:GetAccountStatus	allowed
+aws-external-anthropic:GetAgent	configuration-value	agent configuration
+aws-external-anthropic:GetBatchInference	denied	batch results
+aws-external-anthropic:GetEnvironment	configuration-value	agent environment configuration
+aws-external-anthropic:GetFile	denied	file content
+aws-external-anthropic:GetKey	allowed
+aws-external-anthropic:GetMemoryStore	denied	agent memories
+aws-external-anthropic:GetModel	allowed
+aws-external-anthropic:GetSession	denied	session events
+aws-external-anthropic:GetSkill	allowed
+aws-external-anthropic:GetUserProfile	allowed
+aws-external-anthropic:GetVault	denied	a credential vault's credentials
+aws-external-anthropic:GetWebhook	configuration-value	webhook configuration
+aws-external-anthropic:GetWorkspace	allowed
+aws-external-anthropic:ListAgents	configuration-value	agent configuration
+aws-external-anthropic:ListBatchInferences	allowed
+aws-external-anthropic:ListEnvironments	configuration-value	agent environment configuration
+aws-external-anthropic:ListFiles	allowed
+aws-external-anthropic:ListKeys	allowed
+aws-external-anthropic:ListMemoryStores	allowed
+aws-external-anthropic:ListModels	allowed
+aws-external-anthropic:ListSessions	allowed
+aws-external-anthropic:ListSkills	allowed
+aws-external-anthropic:ListTagsForResource	allowed
+aws-external-anthropic:ListUserProfiles	allowed
+aws-external-anthropic:ListVaults	allowed
+aws-external-anthropic:ListWebhooks	configuration-value	webhook configuration
+aws-external-anthropic:ListWorkspaces	allowed
 aws-portal:ViewAccount	allowed
 aws-portal:ViewBilling	allowed
 aws-portal:ViewPaymentMethods	allowed
@@ -526,6 +597,13 @@ backup-gateway:ListGateways	allowed
 backup-gateway:ListHypervisors	allowed
 backup-gateway:ListTagsForResource	allowed
 backup-gateway:ListVirtualMachines	allowed
+backup-search:GetSearchJob	allowed
+backup-search:GetSearchResultExportJob	allowed
+backup-search:ListSearchJobBackups	allowed
+backup-search:ListSearchJobResults	allowed
+backup-search:ListSearchJobs	allowed
+backup-search:ListSearchResultExportJobs	allowed
+backup-search:ListTagsForResource	allowed
 backup:DescribeBackupAccessPoint	allowed
 backup:DescribeBackupJob	allowed
 backup:DescribeBackupVault	allowed
@@ -653,6 +731,7 @@ bedrock-agentcore:GetResourcePolicy	allowed
 bedrock-agentcore:GetTokenVault	allowed
 bedrock-agentcore:GetWorkloadIdentity	allowed
 bedrock-agentcore:ListABTests	allowed
+bedrock-agentcore:ListActors	allowed
 bedrock-agentcore:ListAgentRuntimeEndpoints	allowed
 bedrock-agentcore:ListAgentRuntimes	allowed
 bedrock-agentcore:ListAgentRuntimeVersions	allowed
@@ -667,16 +746,27 @@ bedrock-agentcore:ListCodeInterpreters	allowed
 bedrock-agentcore:ListCodeInterpreterSessions	allowed
 bedrock-agentcore:ListConfigurationBundles	allowed
 bedrock-agentcore:ListConfigurationBundleVersions	allowed
+bedrock-agentcore:ListConsentPortals	allowed
+bedrock-agentcore:ListDatasetExamples	denied	dataset examples
+bedrock-agentcore:ListDatasets	allowed
+bedrock-agentcore:ListDatasetVersions	allowed
 bedrock-agentcore:ListEvaluators	allowed
 bedrock-agentcore:ListEvents	denied
+bedrock-agentcore:ListGatewayRateLimits	allowed
+bedrock-agentcore:ListGatewayRules	allowed
 bedrock-agentcore:ListGateways	allowed
 bedrock-agentcore:ListGatewayTargets	allowed
 bedrock-agentcore:ListHarnessEndpoints	allowed
 bedrock-agentcore:ListHarnesses	allowed
+bedrock-agentcore:ListHarnessVersions	allowed
 bedrock-agentcore:ListMemories	allowed
+bedrock-agentcore:ListMemoryExtractionJobs	allowed
 bedrock-agentcore:ListMemoryRecords	denied
 bedrock-agentcore:ListOauth2CredentialProviders	allowed
 bedrock-agentcore:ListOnlineEvaluationConfigs	allowed
+bedrock-agentcore:ListPaymentConnectors	allowed
+bedrock-agentcore:ListPaymentCredentialProviders	allowed
+bedrock-agentcore:ListPaymentInstruments	allowed
 bedrock-agentcore:ListPolicies	allowed
 bedrock-agentcore:ListPolicyEngines	allowed
 bedrock-agentcore:ListPolicyEngineSummaries	allowed
@@ -710,6 +800,8 @@ bedrock:AgenticRetrieveStream	denied
 bedrock:CallWithBearerToken	denied
 bedrock:CheckIngestedDocumentAcl	allowed
 bedrock:CountTokens	allowed
+bedrock:ExportAutomatedReasoningPolicyVersion	allowed
+bedrock:GenerateQuery	allowed
 bedrock:GetAccountDataRetention	allowed
 bedrock:GetAdvancedPromptOptimizationJob	allowed
 bedrock:GetAgent	allowed
@@ -767,6 +859,7 @@ bedrock:GetPrompt	allowed
 bedrock:GetPromptRouter	allowed
 bedrock:GetProvisionedModelThroughput	allowed
 bedrock:GetResourcePolicy	allowed
+bedrock:GetRetrievalInstruction	allowed
 bedrock:GetSession	allowed
 bedrock:GetUseCaseForModelAccess	allowed
 bedrock:ListAdvancedPromptOptimizationJobs	allowed
@@ -809,11 +902,14 @@ bedrock:ListKnowledgeBases	allowed
 bedrock:ListMarketplaceModelEndpoints	allowed
 bedrock:ListModelCopyJobs	allowed
 bedrock:ListModelCustomizationJobs	allowed
+bedrock:ListModelEvaluationJobs	allowed
 bedrock:ListModelImportJobs	allowed
 bedrock:ListModelInvocationJobs	allowed
 bedrock:ListPromptRouters	allowed
 bedrock:ListPrompts	allowed
 bedrock:ListProvisionedModelThroughputs	allowed
+bedrock:ListRetrievalInstructions	allowed
+bedrock:ListRetrievalInstructionVersions	allowed
 bedrock:ListSessions	allowed
 bedrock:ListTagsForResource	allowed
 bedrock:RenderPrompt	allowed
@@ -1299,6 +1395,7 @@ cloudtrail:ListTags	allowed
 cloudtrail:ListTrails	allowed
 cloudtrail:LookupEvents	allowed
 cloudtrail:StartQuery	allowed
+cloudwatch:CreateOneTimeDeepLinkCode	denied	a one-time sign-in code
 cloudwatch:DescribeAlarmHistory	allowed
 cloudwatch:DescribeAlarms	allowed
 cloudwatch:DescribeAlarmsForMetric	allowed
@@ -3481,6 +3578,7 @@ identitystore-auth:BatchGetSession	allowed
 identitystore-auth:ListSessions	allowed
 identitystore:DescribeGroup	allowed
 identitystore:DescribeGroupMembership	allowed
+identitystore:DescribeRegion	allowed
 identitystore:DescribeUser	allowed
 identitystore:GetGroupId	allowed
 identitystore:GetGroupMembershipId	allowed
@@ -3489,6 +3587,7 @@ identitystore:IsMemberInGroups	allowed
 identitystore:ListGroupMemberships	allowed
 identitystore:ListGroupMembershipsForMember	allowed
 identitystore:ListGroups	allowed
+identitystore:ListRegions	allowed
 identitystore:ListUsers	allowed
 imagebuilder:GetComponent	configuration-value
 imagebuilder:GetComponentPolicy	allowed
@@ -4806,6 +4905,7 @@ oam:ListAttachedLinks	allowed
 oam:ListLinks	allowed
 oam:ListSinks	allowed
 observabilityadmin:GetCentralizationRuleForOrganization	allowed
+observabilityadmin:GetDatasetIntegration	allowed
 observabilityadmin:GetS3TableIntegration	allowed
 observabilityadmin:GetTelemetryEnrichmentStatus	allowed
 observabilityadmin:GetTelemetryEvaluationStatus	allowed
@@ -4814,6 +4914,7 @@ observabilityadmin:GetTelemetryPipeline	configuration-value
 observabilityadmin:GetTelemetryRule	allowed
 observabilityadmin:GetTelemetryRuleForOrganization	allowed
 observabilityadmin:ListCentralizationRulesForOrganization	allowed
+observabilityadmin:ListDatasetIntegrations	allowed
 observabilityadmin:ListResourceTelemetry	allowed
 observabilityadmin:ListResourceTelemetryForOrganization	allowed
 observabilityadmin:ListS3TableIntegrations	allowed
@@ -5194,6 +5295,7 @@ rds:DescribeValidDBInstanceModifications	allowed
 rds:DownloadCompleteDBLogFile	allowed
 rds:DownloadDBLogFilePortion	allowed
 rds:ListTagsForResource	allowed
+redshift-serverless:DescribeOneTimeCredit	allowed
 redshift-serverless:GetCustomDomainAssociation	allowed
 redshift-serverless:GetEndpointAccess	allowed
 redshift-serverless:GetNamespace	allowed
@@ -5470,6 +5572,7 @@ route53:GetHealthCheckStatus	allowed
 route53:GetHostedZone	allowed
 route53:GetHostedZoneCount	allowed
 route53:GetHostedZoneLimit	allowed
+route53:GetIpGuardrailPolicy	allowed
 route53:GetQueryLoggingConfig	allowed
 route53:GetReusableDelegationSet	allowed
 route53:GetReusableDelegationSetLimit	allowed
@@ -5484,7 +5587,9 @@ route53:ListHealthChecks	allowed
 route53:ListHostedZones	allowed
 route53:ListHostedZonesByName	allowed
 route53:ListHostedZonesByVPC	allowed
+route53:ListIpGuardrailPolicies	allowed
 route53:ListQueryLoggingConfigs	allowed
+route53:ListResourceRecordSetProtections	allowed
 route53:ListResourceRecordSets	allowed
 route53:ListReusableDelegationSets	allowed
 route53:ListTagsForResource	allowed
@@ -5953,14 +6058,22 @@ securityagent:BatchGetPentestJobContentMetadata	allowed
 securityagent:BatchGetPentestJobs	allowed
 securityagent:BatchGetPentestJobTasks	allowed
 securityagent:BatchGetPentests	allowed
+securityagent:BatchGetSecurityRequirements	allowed
 securityagent:BatchGetTargetDomains	allowed
+securityagent:BatchGetThreatModelJobs	allowed
+securityagent:BatchGetThreatModelJobTasks	allowed
+securityagent:BatchGetThreatModels	allowed
+securityagent:BatchGetThreats	allowed
 securityagent:BatchGetValidationRuns	allowed
+securityagent:DescribePrivateConnection	allowed
 securityagent:GetApplication	allowed
 securityagent:GetArtifact	denied
 securityagent:GetDesignReview	allowed
 securityagent:GetDesignReviewArtifact	allowed
 securityagent:GetDesignReviewFeedback	allowed
 securityagent:GetIntegration	allowed
+securityagent:GetProviderRegistrationManifest	allowed
+securityagent:GetSecurityRequirement	allowed
 securityagent:GetSecurityRequirementPack	allowed
 securityagent:ListAgentSpaces	allowed
 securityagent:ListApplications	allowed
@@ -5979,10 +6092,16 @@ securityagent:ListMemberships	allowed
 securityagent:ListPentestJobsForPentest	allowed
 securityagent:ListPentestJobTasks	allowed
 securityagent:ListPentests	allowed
+securityagent:ListPrivateConnections	allowed
 securityagent:ListResourcesFromIntegration	allowed
 securityagent:ListSecurityRequirementPacks	allowed
 securityagent:ListSecurityRequirements	allowed
+securityagent:ListTagsForResource	allowed
 securityagent:ListTargetDomains	allowed
+securityagent:ListThreatModelJobs	allowed
+securityagent:ListThreatModelJobTasks	allowed
+securityagent:ListThreatModels	allowed
+securityagent:ListThreats	allowed
 securityhub:BatchGetAutomationRules	allowed
 securityhub:BatchGetConfigurationPolicyAssociations	allowed
 securityhub:BatchGetControlEvaluations	allowed
@@ -6524,6 +6643,8 @@ sso:ListProfiles	allowed
 sso:ListRegions	allowed
 sso:ListTagsForResource	allowed
 sso:ListTrustedTokenIssuers	allowed
+sso:SearchGroups	allowed
+sso:SearchUsers	allowed
 startups:GetSpendSummary	allowed
 states:DescribeActivity	allowed
 states:DescribeExecution	configuration-value	execution input and output
@@ -6576,6 +6697,11 @@ storagegateway:ListVolumes	allowed
 sts:GetAccessKeyInfo	allowed
 sts:GetCallerIdentity	allowed
 sts:GetSessionToken	allowed
+support-console:CheckSubscription	allowed
+support-console:DescribeDynamicHelp	allowed
+support-console:GetAccountGovCloudEnabled	allowed
+support-console:GetAccountState	allowed
+support-console:GetBanner	allowed
 support:DescribeAttachment	denied
 support:DescribeCaseAttributes	allowed
 support:DescribeCases	allowed
@@ -6930,6 +7056,7 @@ wellarchitected:GetReviewTemplateLensReview	allowed
 wellarchitected:GetWorkload	allowed
 wellarchitected:ListAgentContexts	allowed
 wellarchitected:ListAgentGoals	allowed
+wellarchitected:ListAgentOrganizationalReports	allowed
 wellarchitected:ListAgentProfiles	allowed
 wellarchitected:ListAgentRecommendationGenerations	allowed
 wellarchitected:ListAgentRecommendationItems	allowed

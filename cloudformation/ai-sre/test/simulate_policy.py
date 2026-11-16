@@ -323,6 +323,15 @@ CHECKS = [
         "medialive:DescribeInputDeviceThumbnail", "rds:DescribeTenantDatabases", "dms:DescribeEndpoints",
         "ds:DescribeDirectories",
     ]],
+    # Reviewed in read-only-access-review.tsv for ReadOnlyAccess v192: a sign-in code, Claude Platform on AWS
+    # bearer token calls and credential vaults, and stored content.
+    *[(action, ANY, (), *both(DENY)) for action in [
+        "cloudwatch:CreateOneTimeDeepLinkCode", "aws-external-anthropic:CallWithBearerToken",
+        "aws-external-anthropic:GetVault", "aidevops:GetAssetContent", "aidevops:GetAssetFile",
+        "aws-external-anthropic:GetFile", "aws-external-anthropic:GetMemoryStore", "aws-external-anthropic:GetSession",
+        "aws-external-anthropic:GetBatchInference", "agentaccess-mcp:GetScreenshot",
+        "bedrock-agentcore:ListDatasetExamples",
+    ]],
     # Content like logs, readable with true only: whatever was pasted into a Support case, and command output.
     *[(action, ANY, (), *BROAD) for action in [
         "support:DescribeCases", "support:DescribeCommunication", "support:DescribeCommunications",

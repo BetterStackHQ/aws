@@ -565,6 +565,11 @@ Resources:
               - interconnect:GetConnection
               - ec2:GetVpnConnectionDeviceSampleConfiguration
               - ec2:ExportClientVpnClientConfiguration
+              # A one-time code that is exchanged for a signed-in CloudWatch session; Claude Platform on AWS bearer
+              # token calls, as bedrock:CallWithBearerToken above, and credential vaults.
+              - cloudwatch:CreateOneTimeDeepLinkCode
+              - aws-external-anthropic:CallWithBearerToken
+              - aws-external-anthropic:GetVault
             Resource: '*'
           - Sid: DenyApiKeys
             Effect: Deny
@@ -720,6 +725,17 @@ Resources:
               - lambda:GetDurableExecution
               - lambda:GetDurableExecutionHistory
               - lambda:GetDurableExecutionState
+              # DevOps Agent asset content; Claude Platform on AWS files, memory stores, session events and batch
+              # results (prompts and model output, as bedrock-mantle:GetInference above); screenshots of a WorkSpaces
+              # session; AgentCore dataset examples.
+              - aidevops:GetAssetContent
+              - aidevops:GetAssetFile
+              - aws-external-anthropic:GetFile
+              - aws-external-anthropic:GetMemoryStore
+              - aws-external-anthropic:GetSession
+              - aws-external-anthropic:GetBatchInference
+              - agentaccess-mcp:GetScreenshot
+              - bedrock-agentcore:ListDatasetExamples
               # End users of the customer's product.
               - cognito-idp:AdminGet*
               - cognito-idp:AdminList*
