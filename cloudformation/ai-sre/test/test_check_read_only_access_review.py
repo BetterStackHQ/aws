@@ -167,6 +167,7 @@ class ReviewTest(unittest.TestCase):
         self.assertIn("secretsmanager:GetSecretValue", patterns)
         self.assertIn("s3:GetObject*", patterns)
         self.assertIn("lambda:GetFunctionConfiguration", patterns, "secret-bearing configuration is denied in both scopes")
+        self.assertIn("cloudformation:DetectStackResourceDrift", patterns, "it returns resource properties, like DescribeStackResourceDrifts")
         self.assertNotIn("events:ListTargetsByRule", patterns, "the configuration deny applies with curated only")
 
 

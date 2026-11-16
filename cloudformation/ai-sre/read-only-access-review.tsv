@@ -1132,7 +1132,7 @@ cloudformation:DescribeStackSetOperation	allowed
 cloudformation:DescribeType	allowed
 cloudformation:DescribeTypeRegistration	allowed
 cloudformation:DetectStackDrift	allowed
-cloudformation:DetectStackResourceDrift	allowed
+cloudformation:DetectStackResourceDrift	denied	resource properties
 cloudformation:DetectStackSetDrift	allowed
 cloudformation:EstimateTemplateCost	allowed
 cloudformation:GetGeneratedTemplate	denied	resource properties

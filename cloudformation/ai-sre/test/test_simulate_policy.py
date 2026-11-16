@@ -52,7 +52,7 @@ DENIED_SECRET_BEARING_CONFIGURATION = [
     "batch:DescribeServiceJob", "cloudformation:DescribeStacks", "cloudformation:DescribeChangeSet",
     "cloudformation:DescribeStackSet", "cloudformation:DescribeStackInstance", "cloudformation:DescribeStackResource",
     "cloudformation:GetTemplate", "cloudformation:BatchDescribeTypeConfigurations", "cloudformation:DescribeStackEvents",
-    "cloudformation:DescribeEvents", "cloudformation:DescribeStackResourceDrifts",
+    "cloudformation:DescribeEvents", "cloudformation:DescribeStackResourceDrifts", "cloudformation:DetectStackResourceDrift",
     "cloudformation:ListStackInstanceResourceDrifts", "cloudformation:GetResource", "cloudformation:ListResources",
     "cloudformation:GetGeneratedTemplate", "cloudformation:ListResourceRequests", "cloudformation:GetResourceRequestStatus",
     "config:BatchGetResourceConfig", "config:BatchGetAggregateResourceConfig", "config:GetResourceConfigHistory",

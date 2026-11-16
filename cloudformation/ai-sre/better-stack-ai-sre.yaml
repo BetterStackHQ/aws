@@ -72,12 +72,11 @@ Parameters:
     Type: String
     Description: >-
       curated: a fixed list of reads Better Stack maintains. broad: AWS's ReadOnlyAccess as well, which AWS extends as
-      it adds services. Both deny secrets, credentials and stored data, and the Lambda, ECS, EC2, Auto Scaling, Batch,
-      CloudFormation and AWS Config reads that return environment variables, user data, job definitions or stack
-      parameters. With broad, other services' configuration stays readable and can carry the same values, such as
-      CodeBuild, App Runner, Amplify, Elastic Beanstalk, Glue, CodePipeline, Service Catalog, SageMaker and Image
-      Builder, and so does a CloudTrail Lake event data store of AWS Config items. In both, CloudTrail event history
-      keeps the request parameters of calls such as CreateStack.
+      it adds services. Both deny the reads the README lists as known to return secrets, credentials, stored data,
+      environment variables, user data, job definitions or stack parameters. With broad, ReadOnlyAccess can still
+      expose such values through other services; those found so far are CodeBuild, App Runner, Amplify, Elastic
+      Beanstalk, Glue, CodePipeline, Service Catalog, SageMaker, Image Builder and CloudTrail Lake. In both, CloudTrail
+      event history keeps the request parameters of calls such as CreateStack.
     Default: curated
     AllowedValues:
       - curated
@@ -474,6 +473,7 @@ Resources:
               - cloudformation:DescribeStackEvents
               - cloudformation:DescribeEvents
               - cloudformation:DescribeStackResourceDrifts
+              - cloudformation:DetectStackResourceDrift
               - cloudformation:ListStackInstanceResourceDrifts
               # Cloud Control returns resources' full properties, and resource requests the properties they set.
               - cloudformation:GetResource
