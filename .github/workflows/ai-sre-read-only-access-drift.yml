@@ -1,11 +1,12 @@
 name: "AI SRE ReadOnlyAccess drift"
 
-# The AI SRE role attaches AWS's managed ReadOnlyAccess in its default setting, and AWS adds reads to that policy as it
-# launches services; the change reaches every role that has it. cloudformation/ai-sre/read-only-access-review.tsv is the
-# reviewed verdict on each action the role can be granted. This job reads ReadOnlyAccess's default version, expands it
-# and every Allow wildcard in the template's inline policies against AWS's service reference, and fails when an action
-# has no line in the list yet, so that each new read is reviewed (and denied, if it returns secrets or stored data)
-# before customers rely on the role. The schedule catches AWS's changes; pull requests catch changes to the template.
+# The AI SRE role attaches AWS's managed ReadOnlyAccess with AllowConfigurationValues=true, and AWS adds reads to that
+# policy as it launches services; the change reaches every role that has it.
+# cloudformation/ai-sre/read-only-access-review.tsv is the reviewed verdict on each action the role can be granted.
+# This job reads ReadOnlyAccess's default version, expands it and every Allow wildcard in the template's inline
+# policies against AWS's service reference, and fails when an action has no line in the list yet, so that each new
+# read is reviewed (and denied, if it returns secrets or stored data) before customers rely on the role. The schedule
+# catches AWS's changes; pull requests catch changes to the template.
 #
 # AWS: the E2E workflow's role (see e2e.yml), for iam:GetPolicy and iam:GetPolicyVersion on the AWS managed policy only.
 # Pull requests from forks are skipped: they get no OIDC token.

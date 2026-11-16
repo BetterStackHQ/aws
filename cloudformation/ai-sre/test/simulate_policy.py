@@ -43,9 +43,9 @@ def both(decision):
     return decision, decision
 
 
-CONFIG = (ALLOW, DENY)  # readable by default, denied with AllowConfigurationValues=false
+CONFIG = (ALLOW, DENY)  # readable with AllowConfigurationValues=true, denied with false, the default
 BROAD = (ALLOW, NONE)  # granted by ReadOnlyAccess or BetterStackAiSreBroadAccess, so only with true
-# kms:ViaService values the default setting may decrypt through, besides CloudWatch Logs (allowed in both).
+# kms:ViaService values the true setting may decrypt through, besides CloudWatch Logs (allowed in both).
 KMS_BROAD_SERVICES = ["lambda", "s3", "xray", "rds", "states", "glue"]
 
 # (action, resource, context, decision with true, decision with false)
@@ -225,7 +225,7 @@ CHECKS = [
         "codecommit:GitPull", "codecommit:GetFile", "codecommit:GetFolder", "codecommit:GetBlob",
         "codeartifact:ReadFromRepository", "codeartifact:GetPackageVersionAsset",
     ]],
-    # Configuration values: readable by default, denied with AllowConfigurationValues=false.
+    # Configuration values: readable with AllowConfigurationValues=true, denied with false, the default.
     ("lambda:ListFunctions", ANY, (), *CONFIG),
     ("lambda:ListVersionsByFunction", ANY, (), *CONFIG),
     ("lambda:GetFunctionConfiguration", ANY, (), *CONFIG),

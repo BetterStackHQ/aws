@@ -5,7 +5,7 @@ The list has two header lines, `# ReadOnlyAccess <version id>` and `# service re
 line per action: `<prefix>:<ActionName><TAB><verdict>`, with an optional third TAB column holding a short note on
 `denied` and `configuration-value` lines only. The action is spelled as AWS's service reference spells it, the lines
 are sorted by the lowercased action, and none repeats. A verdict is `allowed`, `denied` (a Deny statement of the
-template matches it in both settings) or `configuration-value` (readable in the default setting by design).
+template matches it in both settings) or `configuration-value` (readable with AllowConfigurationValues=true by design).
 
 --static checks the list's format, and that every `denied` line is matched by a Deny statement the role has in both
 settings, unconditional and on every resource. A Deny with a condition or a resource scope (the S3 objects outside

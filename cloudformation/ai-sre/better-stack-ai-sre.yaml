@@ -70,10 +70,11 @@ Parameters:
   AllowConfigurationValues:
     Type: String
     Description: >-
-      When true, the role gets AWS's ReadOnlyAccess policy, with secrets, credentials and stored data denied. When
-      false, it gets a fixed, shorter list of reads and denies every read Better Stack knows returns environment
-      variables, user data or parameter values.
-    Default: 'true'
+      false (the default): the role gets a fixed list of reads and denies every read Better Stack knows returns
+      environment variables, user data or parameter values. true: the role also gets AWS's ReadOnlyAccess policy, which
+      makes configuration values such as environment variables readable and which AWS extends on its own as it adds
+      services; secrets, credentials and stored data stay denied.
+    Default: 'false'
     AllowedValues:
       - 'true'
       - 'false'
@@ -106,8 +107,8 @@ Resources:
         - !Sub 'Read-only access for Better Stack AI SRE. Team: ${BetterStackTeam}'
         - Read-only access for Better Stack AI SRE.
       PermissionsBoundary: !If [HasPermissionsBoundary, !Ref PermissionsBoundaryArn, !Ref 'AWS::NoValue']
-      # AWS's ReadOnlyAccess in the default setting only. AWS extends it as it adds services; the denies still apply to
-      # everything it grants.
+      # AWS's ReadOnlyAccess with AllowConfigurationValues=true only. AWS extends it as it adds services; the denies
+      # still apply to everything it grants.
       ManagedPolicyArns:
         # The explicit denies, in both settings, so that ReadOnlyAccess or a broader policy attached to the role later
         # can't widen it to secrets or data. They are managed policies of this stack because the role's inline
