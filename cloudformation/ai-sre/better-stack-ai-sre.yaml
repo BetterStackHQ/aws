@@ -417,7 +417,7 @@ Resources:
   AiSreDenyDataPolicy:
     Type: AWS::IAM::ManagedPolicy
     # cfn-lint 1.60 doesn't know securityhub:GetCSPMOrganizationsImportStatus yet (W3037). Every action name here is
-    # still checked against AWS's service reference by the ReadOnlyAccess drift workflow.
+    # still checked against AWS's service reference by test/check_restricted_reads.py.
     Metadata:
       cfn-lint:
         config:

@@ -63,6 +63,8 @@ The role has no `ReadOnlyAccess`. It reads exactly this list, minus the configur
 - `signin:CreateOAuth2Token` for AWS's MCP Server, which Better Stack calls with the role's session
 - `kms:Decrypt` through CloudWatch Logs only, for log groups encrypted with your key
 
+The template writes this list with wildcards such as `cloudwatch:Get*`, so it also covers an action AWS adds later under one of them. [`restricted-reads.txt`](restricted-reads.txt) lists every action the wildcards matched when this release was made, and which of them the role denies.
+
 This role may need a stack update when AI SRE learns to use more services.
 
 ### With `AllowConfigurationValues=true`
@@ -111,7 +113,7 @@ These reads are denied explicitly, in both settings, so that `ReadOnlyAccess` or
 
 With `AllowConfigurationValues=false`, nothing allows `kms:Decrypt` through any service but CloudWatch Logs, so resources under your own key stay unreadable there unless your key policy grants the role directly. Lambda decrypts a function's environment variables as the caller, so with `true`, environment variables under the default `aws/lambda` key are readable.
 
-The template's [CI](#template-contract) keeps [`read-only-access-review.tsv`](read-only-access-review.tsv), a reviewed verdict on every action `ReadOnlyAccess` and the inline policies grant, and fails when AWS adds one that hasn't been reviewed yet. `ReadOnlyAccess` is large, and the review can miss a read that returns secrets or stored data.
+This list comes from a review of every action `ReadOnlyAccess` granted on Nov 13, 2026 (its version v192). Nothing reviews what AWS adds to `ReadOnlyAccess` after that: with `AllowConfigurationValues=true`, a new read is allowed until a release of this template denies it. `ReadOnlyAccess` is large, and the review can have missed a read that returns secrets or stored data. If that matters to you, keep the default, `AllowConfigurationValues=false`.
 
 ### Content like logs
 
@@ -170,25 +172,26 @@ Better Stack, setup links already sent, stacks updated in place and roles rebuil
 - Better Stack's source identity values start with `bs-`, and always will.
 - The deny policies `better-stack-ai-sre-deny-data-<8 hex>` and `better-stack-ai-sre-deny-stored-data-<8 hex>` keep their names and stay attached to the role in both settings.
 
-[`contract.json`](contract.json) records these fields. CI lints the template with cfn-lint, checks it against the contract (`test/check_contract.py`), checks the reviewed `ReadOnlyAccess` list (`test/check_read_only_access_review.py --static`), and runs the tests of those checks and of the policy simulator script:
+[`contract.json`](contract.json) records these fields. On every pull request, CI lints the template with cfn-lint, checks it against the contract (`test/check_contract.py`), and runs the unit tests. They check the expectations in `test/simulate_policy.py`, every read the role must allow and every read it must deny in each setting, against the template's own policies:
 
 ```bash
 cd cloudformation/ai-sre/test
 pip install cfn-lint pyyaml
 cfn-lint ../better-stack-ai-sre.yaml
 python check_contract.py
-python check_read_only_access_review.py --static
 python -m unittest -v
 ```
 
-The [ReadOnlyAccess drift workflow](../../.github/workflows/ai-sre-read-only-access-drift.yml) runs daily and on changes to this directory: it reads `ReadOnlyAccess`'s default version, expands it and the inline policies' wildcards against [AWS's service reference](https://servicereference.us-east-1.amazonaws.com/), and fails on any action the reviewed list has no line for.
+Two checks need AWS and run only by hand, from the [E2E AI SRE workflow](../../.github/workflows/e2e-ai-sre.yml) (**Run workflow**): on the branch of a pull request that changes the template, and on `main` before a release.
 
-`test/simulate_policy.py` asserts every allowed read and every explicit deny on a deployed role with IAM's policy simulator; the [E2E AI SRE workflow](../../.github/workflows/e2e-ai-sre.yml) deploys the stack, runs it with both settings of `AllowConfigurationValues`, and deletes the stack.
+- The stack round trip deploys the template, asserts the same expectations on the deployed role with IAM's policy simulator in both settings of `AllowConfigurationValues`, and deletes the stack. To run the simulator on a role you deployed:
 
-```bash
-pip install boto3
-python simulate_policy.py --role-arn arn:aws:iam::<account>:role/better-stack-ai-sre-role-<8 hex> --allow-configuration-values true
-```
+  ```bash
+  pip install boto3
+  python simulate_policy.py --role-arn arn:aws:iam::<account>:role/better-stack-ai-sre-role-<8 hex> --allow-configuration-values true
+  ```
+
+- `python check_restricted_reads.py` expands the restricted role's wildcards against [AWS's service reference](https://servicereference.us-east-1.amazonaws.com/) and fails on an action [`restricted-reads.txt`](restricted-reads.txt) lacks, which is one AWS added since the last review. Review what it returns, deny it in the template if it returns secrets, stored data or configuration values, then run `python check_restricted_reads.py --update`. It also fails on an action name in the template that matches nothing.
 
 ## Support
 
