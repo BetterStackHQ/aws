@@ -5,7 +5,8 @@
 # the stack) and the /e2e/* log groups. The workflow runs this twice: before a run, so leftovers of a killed cleanup
 # never block the next run, and after it. One run at a time per account (the workflow's concurrency group), so nothing
 # with these names belongs to a live run.
-# Writes a markdown report to out/cleanup.md and exits 1 when something could not be listed or deleted.
+# Writes a markdown report to out/cleanup.md and exits 1 when something could not be listed or deleted, or when a
+# /aws/lambda/better-stack-* log group outlived its stack (it is deleted, so the next run starts clean).
 # Env: API, TEST_TEAM_TELEMETRY_API, SOURCE_PREFIX, AWS_REGION (+ AWS credentials for the account).
 set -euo pipefail
 
@@ -43,6 +44,14 @@ done
 LOG_GROUPS=$(aws logs describe-log-groups --query "logGroups[?logGroupName == 'aws/spans' || logGroupName == '/aws/application-signals/data' || starts_with(logGroupName, '/e2e/')].logGroupName" --output text) || { could_not_list "log groups"; LOG_GROUPS=""; }
 for group in $LOG_GROUPS; do
   if aws logs delete-log-group --log-group-name "$group"; then say "- deleted log group \`$group\`"; else say "- ❌ could not delete log group \`$group\`"; touch cleanup.failed; fi
+done
+
+# The stack deletes its Lambdas' log groups itself. One that exists now was recreated by an invocation that started
+# while the stack was being deleted, and it makes a customer's next deployment fail on the name conflict.
+LAMBDA_LOG_GROUPS=$(aws logs describe-log-groups --log-group-name-prefix /aws/lambda/better-stack- --query 'logGroups[].logGroupName' --output text) || { could_not_list "Lambda log groups"; LAMBDA_LOG_GROUPS=""; }
+for group in $LAMBDA_LOG_GROUPS; do
+  touch cleanup.failed
+  if aws logs delete-log-group --log-group-name "$group"; then say "- ❌ the deleted stack left log group \`$group\` behind, deleted it"; else say "- ❌ the deleted stack left log group \`$group\` behind, and it could not be deleted"; fi
 done
 
 [ "$(wc -l < out/cleanup.md)" -gt 2 ] || say "- nothing to delete"
