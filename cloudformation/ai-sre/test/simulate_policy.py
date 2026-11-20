@@ -112,6 +112,7 @@ CHECKS = [
     ("application-autoscaling:DescribeScalableTargets", ANY, (), *both(ALLOW)),
     ("iam:ListAccountAliases", ANY, (), *both(ALLOW)),
     ("account:ListRegions", ANY, (), *both(ALLOW)),
+    ("account:GetAccountInformation", ANY, (), *both(ALLOW)),
     # The role's own description and policies; other roles' only through ReadOnlyAccess.
     ("iam:GetRole", SELF, (), *both(ALLOW)),
     ("iam:ListRolePolicies", SELF, (), *both(ALLOW)),

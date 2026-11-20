@@ -58,7 +58,7 @@ The role has no `ReadOnlyAccess`. It reads exactly this list, minus the configur
 - Load balancers, API Gateway configuration and Route 53 zones
 - SQS, SNS, Kinesis and Firehose metadata; Step Functions and EventBridge
 - CloudTrail trails and event history (`LookupEvents`), AWS Health events, X-Ray traces
-- CloudFormation stacks and their resources' status, not their `Metadata`, Application Auto Scaling, the account alias and enabled regions
+- CloudFormation stacks and their resources' status, not their `Metadata`, Application Auto Scaling, the account alias, the account name (`account:GetAccountInformation`) and enabled regions
 - Its own role and policies, and the stack's two deny policies (`iam:GetRole` and the role policy reads on its own ARN, `iam:GetPolicy` and `iam:GetPolicyVersion` on the two policies' ARNs, nothing else), to tell which release it runs and what it allows
 - `signin:CreateOAuth2Token` for AWS's MCP Server, which Better Stack calls with the role's session
 - `kms:Decrypt` through CloudWatch Logs only, for log groups encrypted with your key
