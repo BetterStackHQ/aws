@@ -1,3 +1,4 @@
+account:GetAccountInformation
 account:ListRegions
 apigateway:GET	denied on some resources
 application-autoscaling:DescribeScalableTargets

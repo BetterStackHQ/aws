@@ -287,7 +287,7 @@ Resources:
                     - health:Describe*
                   Resource: '*'
                 # Logs Insights, recent API activity, traces, deployment history from stack events, scaling, the
-                # account alias and the enabled regions.
+                # account alias, the account name and the enabled regions.
                 - Sid: InvestigationReads
                   Effect: Allow
                   Action:
@@ -301,6 +301,7 @@ Resources:
                     - application-autoscaling:Describe*
                     - iam:ListAccountAliases
                     - account:ListRegions
+                    - account:GetAccountInformation
                   Resource: '*'
           - !Ref 'AWS::NoValue'
         - !If
